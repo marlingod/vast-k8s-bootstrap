@@ -17,6 +17,7 @@
   community.general.modprobe:
     name: "{{ item }}"
     state: present
+    persistent: present
   loop:
     - overlay
     - br_netfilter
@@ -78,9 +79,17 @@
     force: true
   when: ansible_os_family == "Debian"
 
+- name: Compute Docker arch (Debian)
+  ansible.builtin.set_fact:
+    _docker_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else ansible_architecture }}"
+  when: ansible_os_family == "Debian"
+
 - name: Add Docker repository (Debian)
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ 'amd64' if ansible_architecture == 'x86_64' else ansible_architecture }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    repo: >-
+      deb [arch={{ _docker_arch }} signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/ubuntu
+      {{ ansible_distribution_release }} stable
     state: present
     filename: docker
     update_cache: true
@@ -94,7 +103,7 @@
   when: ansible_os_family == "Debian"
 
 - name: Install Docker repo prerequisites (RHEL)
-  ansible.builtin.yum:
+  ansible.builtin.dnf:
     name:
       - yum-utils
       - device-mapper-persistent-data
@@ -113,7 +122,7 @@
   when: ansible_os_family == "RedHat"
 
 - name: Install containerd (RHEL)
-  ansible.builtin.yum:
+  ansible.builtin.dnf:
     name: containerd.io
     state: present
   when: ansible_os_family == "RedHat"

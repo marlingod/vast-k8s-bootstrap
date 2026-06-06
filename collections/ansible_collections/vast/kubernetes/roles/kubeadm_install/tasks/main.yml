@@ -46,7 +46,7 @@
   when: ansible_os_family == "Debian"
 
 - name: Install Kubernetes components (RHEL)
-  ansible.builtin.yum:
+  ansible.builtin.dnf:
     name:
       - kubelet
       - kubeadm

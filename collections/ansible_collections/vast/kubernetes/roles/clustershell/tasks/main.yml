@@ -8,13 +8,13 @@
   when: ansible_os_family == "Debian"
 
 - name: Install EPEL repository (RHEL)
-  ansible.builtin.yum:
+  ansible.builtin.dnf:
     name: epel-release
     state: present
   when: ansible_os_family == "RedHat"
 
 - name: Install ClusterShell on RHEL
-  ansible.builtin.yum:
+  ansible.builtin.dnf:
     name: clustershell
     state: present
   when: ansible_os_family == "RedHat"

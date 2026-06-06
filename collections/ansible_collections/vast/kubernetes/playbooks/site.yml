@@ -5,14 +5,18 @@
 #   zarf  → install VAST DataEngine via Zarf
 #   users → provision K8s users
 
-- import_playbook: k8s_cluster.yml
+- name: Site | bootstrap K8s cluster
+  import_playbook: k8s_cluster.yml
   tags: [k8s, site]
 
-- import_playbook: csi.yml
+- name: Site | install VAST CSI driver
+  import_playbook: csi.yml
   tags: [csi, site]
 
-- import_playbook: zarf.yml
+- name: Site | deploy VAST DataEngine via Zarf
+  import_playbook: zarf.yml
   tags: [zarf, site]
 
-- import_playbook: users.yml
+- name: Site | provision K8s users
+  import_playbook: users.yml
   tags: [users, site]

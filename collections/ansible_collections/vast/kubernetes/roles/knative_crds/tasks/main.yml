@@ -25,7 +25,7 @@
     msg: "All required knative-operator CRDs present — skipping."
   when: not crds_missing
 
-- name: local | apply bundled CRD manifest
+- name: Apply bundled CRD manifest (source=local)
   kubernetes.core.k8s:
     state: present
     src: "{{ role_path }}/files/{{ knative_crds.manifest_path }}"
@@ -34,7 +34,7 @@
     - crds_missing
     - knative_crds.source == 'local'
 
-- name: download | fetch upstream operator.yaml
+- name: Fetch upstream operator.yaml (source=download)
   ansible.builtin.get_url:
     url: "{{ knative_crds.release_url | replace('{version}', knative_crds.version) }}"
     dest: /tmp/knative-op.yaml
@@ -44,9 +44,9 @@
     - crds_missing
     - knative_crds.source == 'download'
 
-- name: download | extract only CustomResourceDefinition documents
+- name: Extract only CustomResourceDefinition documents (source=download)
   ansible.builtin.shell: |
-    set -e
+    set -euo pipefail
     awk '/^---/{if(keep)print buf"---";buf="";keep=0;next}
          /^kind: CustomResourceDefinition/{keep=1}
          {buf=buf $0"\n"}
@@ -58,7 +58,7 @@
     - crds_missing
     - knative_crds.source == 'download'
 
-- name: download | apply extracted CRDs
+- name: Apply extracted CRDs (source=download)
   kubernetes.core.k8s:
     state: present
     src: /tmp/knative-crds.yaml

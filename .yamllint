@@ -13,8 +13,14 @@ rules:
     max-spaces-inside: 1
   octal-values:
     forbid-implicit-octal: true
-    forbid-explicit-octal: false
+    forbid-explicit-octal: true
+  comments-indentation: false
 
 ignore: |
-  collections/ansible_collections/*/*/galaxy.yml
+  collections/ansible_collections/community/
+  collections/ansible_collections/kubernetes/
+  collections/ansible_collections/ansible/
+  collections/ansible_collections/*.info/
+  collections/ansible_collections/vast/kubernetes/galaxy.yml
+  collections/ansible_collections/vast/kubernetes/roles/*/files/
   .cache/

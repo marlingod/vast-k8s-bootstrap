@@ -25,7 +25,7 @@ USER_GROUP=""
 ROLE="cluster-admin"
 SSH_USER="vastdata"
 SSH_HOST=""
-SSH_OPTS="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
+SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
 REMOTE_KUBECONFIG="/etc/kubernetes/admin.conf"
 API_ENDPOINT=""
 OUTPUT=""
@@ -93,7 +93,7 @@ CSR_NAME="${NEW_USER}-csr"
 EXPIRATION_SECONDS=$(( CERT_DAYS * 24 * 3600 ))
 
 echo "1) Probing SSH to ${SSH_TARGET}..."
-"${SSH_CMD[@]}" ${SSH_OPTS} "${SSH_TARGET}" 'true' \
+"${SSH_CMD[@]}" "${SSH_OPTS[@]}" "${SSH_TARGET}" 'true' \
   || { echo "ERROR: cannot SSH to ${SSH_TARGET}" >&2; exit 1; }
 
 echo "2) Generating private key + CSR locally (CN=${NEW_USER}${USER_GROUP:+, O=${USER_GROUP}})..."
@@ -163,7 +163,7 @@ echo "---CA-CERT-B64---"
 echo "\${CA_B64}"
 echo "---END---"
 REMOTE
-} | "${SSH_CMD[@]}" ${SSH_OPTS} "${SSH_TARGET}" "${REMOTE_INVOKE}" >"${REMOTE_OUT}"
+} | "${SSH_CMD[@]}" "${SSH_OPTS[@]}" "${SSH_TARGET}" "${REMOTE_INVOKE}" >"${REMOTE_OUT}"
 
 echo "4) Parsing remote output..."
 awk '/^---SIGNED-CERT-B64---$/{flag="crt"; next}

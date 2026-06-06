@@ -114,7 +114,7 @@
     msg: "DataEngine package not found at {{ zarf_dataengine_package_path }}"
   when: not de_pkg_stat.stat.exists
 
-- name: zarf package deploy
+- name: Run zarf package deploy
   ansible.builtin.command: >-
     zarf package deploy
     --architecture {{ zarf_arch }}

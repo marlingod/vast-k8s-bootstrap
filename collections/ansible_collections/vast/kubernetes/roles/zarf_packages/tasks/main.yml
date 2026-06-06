@@ -38,7 +38,7 @@
   when: not needs_fetch
 
 # ── source=local — fail if missing ──────────────────────────────────────
-- name: local | fail when files missing
+- name: Fail when .tar.zst missing (source=local)
   ansible.builtin.fail:
     msg: |
       zarf_packages.source=local but a .tar.zst is missing on the master.
@@ -49,7 +49,7 @@
     - zarf_packages.source == 'local'
 
 # ── source=download — master fetches outer bundle ───────────────────────
-- name: download | validate bundle_url is set
+- name: Validate bundle_url is set (source=download)
   ansible.builtin.fail:
     msg: "zarf_packages.source=download but zarf_packages.bundle_url is empty."
   when:
@@ -57,14 +57,14 @@
     - zarf_packages.source == 'download'
     - (zarf_packages.bundle_url | default('') | length) == 0
 
-- name: download | derive bundle path on master
+- name: Derive bundle path on master (source=download)
   ansible.builtin.set_fact:
     bundle_master_path: "{{ zarf_packages.dir }}/{{ zarf_packages.bundle_url | basename }}"
   when:
     - needs_fetch
     - zarf_packages.source == 'download'
 
-- name: download | fetch outer bundle
+- name: Fetch outer bundle (source=download)
   ansible.builtin.get_url:
     url: "{{ zarf_packages.bundle_url }}"
     dest: "{{ bundle_master_path }}"
@@ -75,7 +75,7 @@
     - zarf_packages.source == 'download'
 
 # ── source=upload — detect mode (files vs bundle) ───────────────────────
-- name: upload | detect mode
+- name: Detect upload sub-mode (files vs bundle)
   ansible.builtin.set_fact:
     upload_mode: >-
       {{
@@ -90,7 +90,7 @@
     - needs_fetch
     - zarf_packages.source == 'upload'
 
-- name: upload | validate operator path(s)
+- name: Validate operator path(s) (source=upload)
   ansible.builtin.fail:
     msg: "zarf_packages.source=upload but no operator path provided."
   when:
@@ -98,7 +98,7 @@
     - zarf_packages.source == 'upload'
     - upload_mode == 'unset'
 
-- name: upload/files | scp init .tar.zst
+- name: Scp init .tar.zst (upload/files)
   ansible.builtin.copy:
     src: "{{ zarf_packages.operator_init_path }}"
     dest: "{{ zarf_init_package_path }}"
@@ -109,7 +109,7 @@
     - upload_mode == 'files'
     - not init_pkg.stat.exists
 
-- name: upload/files | scp dataengine .tar.zst
+- name: Scp dataengine .tar.zst (upload/files)
   ansible.builtin.copy:
     src: "{{ zarf_packages.operator_dataengine_path }}"
     dest: "{{ zarf_dataengine_package_path }}"
@@ -120,7 +120,7 @@
     - upload_mode == 'files'
     - not de_pkg.stat.exists
 
-- name: upload/bundle | derive bundle path on master
+- name: Derive bundle path on master (upload/bundle)
   ansible.builtin.set_fact:
     bundle_master_path: "{{ zarf_packages.dir }}/{{ zarf_packages.operator_bundle_path | basename }}"
   when:
@@ -128,7 +128,7 @@
     - zarf_packages.source == 'upload'
     - upload_mode == 'bundle'
 
-- name: upload/bundle | scp outer bundle
+- name: Scp outer bundle (upload/bundle)
   ansible.builtin.copy:
     src: "{{ zarf_packages.operator_bundle_path }}"
     dest: "{{ bundle_master_path }}"
