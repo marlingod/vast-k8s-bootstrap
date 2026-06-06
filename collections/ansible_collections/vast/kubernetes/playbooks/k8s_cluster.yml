@@ -1,0 +1,42 @@
+---
+# Bootstrap a kubeadm K8s cluster (containerd + Flannel CNI).
+# Targets: masters, workers (defined in inventory/hosts.ini).
+#
+# Tag: k8s   — run via `make k8s` or `ansible-playbook ... --tags k8s`.
+
+- name: K8s | install ClusterShell on all nodes
+  hosts: all
+  become: true
+  gather_facts: true
+  tags: [k8s, k8s_prereqs]
+  roles:
+    - vast.kubernetes.common_prereqs
+    - vast.kubernetes.clustershell
+
+- name: K8s | install kubeadm prerequisites
+  hosts: k8s
+  become: true
+  gather_facts: true
+  tags: [k8s, k8s_prereqs]
+  roles:
+    - vast.kubernetes.common_prereqs
+    - vast.kubernetes.containerd
+    - vast.kubernetes.kubeadm_install
+    - vast.kubernetes.nfs_client
+    - vast.kubernetes.firewall_k8s
+
+- name: K8s | initialize master(s)
+  hosts: masters
+  become: true
+  gather_facts: true
+  tags: [k8s, k8s_master]
+  roles:
+    - vast.kubernetes.kubeadm_master
+
+- name: K8s | join worker(s)
+  hosts: workers
+  become: true
+  gather_facts: true
+  tags: [k8s, k8s_worker]
+  roles:
+    - vast.kubernetes.kubeadm_worker

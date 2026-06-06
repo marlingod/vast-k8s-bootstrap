@@ -1,0 +1,31 @@
+---
+# Shared prerequisites for every host that subsequently runs apt:
+#   - waits for unattended-upgrades / apt-daily to release the dpkg lock,
+#   - disables the timers so they cannot re-trigger mid-run,
+#   - refreshes the apt cache.
+#
+# On RHEL the systemd unit dance is a no-op (Debian-only guards).
+
+- name: Wait for unattended-upgrades / apt-daily to finish (Debian)
+  ansible.builtin.shell: |
+    systemd-run --wait --property="After=apt-daily.service apt-daily-upgrade.service unattended-upgrades.service" /bin/true
+  changed_when: false
+  when: ansible_os_family == "Debian"
+
+- name: Disable unattended-upgrades for the duration of setup (Debian)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+    - unattended-upgrades.service
+  failed_when: false
+  when: ansible_os_family == "Debian"
+
+- name: Refresh apt cache (Debian)
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_os_family == "Debian"

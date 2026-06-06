@@ -1,0 +1,10 @@
+---
+knative_kubeconfig: /etc/kubernetes/admin.conf
+required_crds:
+  - knativeeventings.operator.knative.dev
+  - knativeservings.operator.knative.dev
+knative_crds:
+  source: local
+  manifest_path: knative-operator-crds-v1.17.1.yaml
+  version: knative-v1.17.1
+  release_url: "https://github.com/knative/operator/releases/download/{version}/operator.yaml"

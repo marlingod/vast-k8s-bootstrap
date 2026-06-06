@@ -1,0 +1,5 @@
+---
+zarf_detect_existing: true
+zarf_version: "v0.60.0"
+zarf_arch: amd64
+zarf_install_dir: /usr/local/bin

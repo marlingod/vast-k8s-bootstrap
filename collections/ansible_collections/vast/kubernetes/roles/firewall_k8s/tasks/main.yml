@@ -1,0 +1,67 @@
+---
+# Opens K8s ports on firewalld or ufw if either is active. No-op if both off.
+
+- name: Check if firewalld is running
+  ansible.builtin.systemd:
+    name: firewalld
+  register: firewalld_status
+  failed_when: false
+
+- name: Open Kubernetes ports on master (firewalld)
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    state: enabled
+  loop:
+    - 6443/tcp
+    - 2379-2380/tcp
+    - 10250/tcp
+    - 10259/tcp
+    - 10257/tcp
+  when:
+    - firewalld_status.status is defined
+    - firewalld_status.status.ActiveState | default('') == "active"
+    - inventory_hostname in groups['masters']
+  notify: Reload firewalld
+
+- name: Open Kubernetes ports on workers (firewalld)
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    state: enabled
+  loop:
+    - 10250/tcp
+    - 30000-32767/tcp
+  when:
+    - firewalld_status.status is defined
+    - firewalld_status.status.ActiveState | default('') == "active"
+    - inventory_hostname in groups['workers']
+  notify: Reload firewalld
+
+- name: Check if ufw is running
+  ansible.builtin.command: ufw status
+  register: ufw_status
+  failed_when: false
+  changed_when: false
+
+- name: Open Kubernetes ports on master (ufw)
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop: ["6443", "2379:2380", "10250", "10259", "10257"]
+  when:
+    - ufw_status.rc == 0
+    - "'active' in ufw_status.stdout"
+    - inventory_hostname in groups['masters']
+
+- name: Open Kubernetes ports on workers (ufw)
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop: ["10250", "30000:32767"]
+  when:
+    - ufw_status.rc == 0
+    - "'active' in ufw_status.stdout"
+    - inventory_hostname in groups['workers']

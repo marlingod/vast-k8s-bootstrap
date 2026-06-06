@@ -1,0 +1,11 @@
+---
+de_kubeconfig: /etc/kubernetes/admin.conf
+zarf_arch: amd64
+zarf_version: "v0.60.0"
+zarf_log_level: debug
+zarf_registry_hpa_auto_size: true
+legacy_init_rename: true
+vast_namespaces:
+  - vast-dataengine
+  - knative-eventing
+  - knative-serving

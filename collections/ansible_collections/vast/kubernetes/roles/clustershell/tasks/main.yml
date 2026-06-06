@@ -1,0 +1,38 @@
+---
+- name: Install ClusterShell on Debian
+  ansible.builtin.apt:
+    name:
+      - clustershell
+      - python3-clustershell
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Install EPEL repository (RHEL)
+  ansible.builtin.yum:
+    name: epel-release
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Install ClusterShell on RHEL
+  ansible.builtin.yum:
+    name: clustershell
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Create ClusterShell groups directory
+  ansible.builtin.file:
+    path: /etc/clustershell/groups.d
+    state: directory
+    mode: '0755'
+
+- name: Configure ClusterShell groups
+  ansible.builtin.template:
+    src: local.cfg.j2
+    dest: /etc/clustershell/groups.d/local.cfg
+    mode: '0644'
+
+- name: Configure ClusterShell defaults
+  ansible.builtin.template:
+    src: clush.conf.j2
+    dest: /etc/clustershell/clush.conf
+    mode: '0644'

@@ -1,0 +1,24 @@
+# Ansible
+*.retry
+.cache/
+
+# Secrets / vault password
+*.vault_pass
+.vault_pass*
+
+# Local manifest cache
+k8s-join-command.sh
+
+# Editor
+.DS_Store
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Zarf packages (large, SE-supplied)
+packages/

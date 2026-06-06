@@ -1,0 +1,11 @@
+---
+sc_kubeconfig: /etc/kubernetes/admin.conf
+storage:
+  detect: true
+  provisioner: byo
+  class_name: ""
+  local_path:
+    source: local
+    manifest_path: local-path-storage-v0.0.32.yaml
+    version: v0.0.32
+    release_url: "https://raw.githubusercontent.com/rancher/local-path-provisioner/{version}/deploy/local-path-storage.yaml"

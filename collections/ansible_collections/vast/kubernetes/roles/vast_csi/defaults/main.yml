@@ -1,0 +1,13 @@
+---
+csi_namespace: vastcsi
+csi_release_name: csi-driver
+csi_driver_name: vastdriver.vastdata.com
+vast_secret_name: vast-csi-secret
+vast_csi_helm_repo_name: vastcsi
+vast_csi_helm_repo_url: https://vast-data.github.io/vast-csi
+vast_csi_chart_name: vastcsi
+vast_csi_chart_version: ""
+vms_tenant: ""
+verify_ssl: false
+csi_kubeconfig: /etc/kubernetes/admin.conf
+storage_classes: {}

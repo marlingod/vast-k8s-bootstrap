@@ -1,0 +1,28 @@
+---
+namespace: vast
+name: kubernetes
+version: 0.1.0
+readme: README.md
+authors:
+  - VAST Data <support@vastdata.com>
+description: >-
+  Ansible collection for bootstrapping a kubeadm K8s cluster, installing the
+  VAST CSI driver, and deploying the VAST DataEngine via Zarf.
+license:
+  - MIT
+tags:
+  - kubernetes
+  - kubeadm
+  - vast
+  - csi
+  - zarf
+  - dataengine
+dependencies:
+  kubernetes.core: ">=3.0.0"
+  community.general: ">=8.0.0"
+  community.crypto: ">=2.0.0"
+  ansible.posix: ">=1.5.0"
+repository: https://github.com/vast-data/kubernetes
+build_ignore:
+  - .cache
+  - tests

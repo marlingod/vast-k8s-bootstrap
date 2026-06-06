@@ -1,0 +1,92 @@
+---
+# Bootstrap the control plane. Idempotent: checks /etc/kubernetes/admin.conf
+# before running `kubeadm init`, so re-runs are a no-op on a healthy master.
+
+- name: Check if Kubernetes is already initialized
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: k8s_init_check
+
+- name: Initialize Kubernetes master
+  # --node-name uses the inventory hostname (e.g. "master") rather than the OS
+  # hostname. Prevents collisions when nodes were cloned from the same image.
+  ansible.builtin.command: >-
+    kubeadm init
+    --apiserver-advertise-address={{ hostvars[inventory_hostname].ansible_host }}
+    --pod-network-cidr={{ pod_network_cidr }}
+    --node-name={{ inventory_hostname }}
+  register: kubeadm_init
+  changed_when: kubeadm_init.rc == 0
+  when: not k8s_init_check.stat.exists
+
+- name: Create .kube directory for {{ ansible_user }}
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}/.kube"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0755'
+
+- name: Copy admin.conf to {{ ansible_user }}
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "/home/{{ ansible_user }}/.kube/config"
+    remote_src: true
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0600'
+
+- name: Create .kube directory for root
+  ansible.builtin.file:
+    path: /root/.kube
+    state: directory
+    mode: '0755'
+
+- name: Copy admin.conf to root
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /root/.kube/config
+    remote_src: true
+    mode: '0600'
+
+- name: Install Flannel CNI
+  kubernetes.core.k8s:
+    state: present
+    src: "https://github.com/flannel-io/flannel/releases/download/{{ flannel_version }}/kube-flannel.yml"
+    kubeconfig: /etc/kubernetes/admin.conf
+
+- name: Wait for Flannel pods to be ready
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: kube-flannel
+    label_selectors: ["app=flannel"]
+    wait: true
+    wait_condition:
+      type: Ready
+      status: "True"
+    wait_timeout: 120
+    kubeconfig: /etc/kubernetes/admin.conf
+  register: flannel_ready
+  retries: 5
+  delay: 10
+  until: flannel_ready is success
+  failed_when: false
+
+- name: Generate join command
+  ansible.builtin.command: kubeadm token create --print-join-command
+  register: join_command
+  changed_when: false
+
+- name: Save join command to file
+  ansible.builtin.copy:
+    content: "{{ join_command.stdout }}"
+    dest: "/home/{{ ansible_user }}/k8s-join-command.sh"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0700'
+
+- name: Fetch join command to local control machine
+  ansible.builtin.fetch:
+    src: "/home/{{ ansible_user }}/k8s-join-command.sh"
+    dest: ./k8s-join-command.sh
+    flat: true

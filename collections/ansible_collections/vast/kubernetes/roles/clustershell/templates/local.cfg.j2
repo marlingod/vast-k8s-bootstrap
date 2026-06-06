@@ -1,0 +1,10 @@
+# Kubernetes cluster groups (managed by vast.kubernetes.clustershell)
+all: {{ (groups['masters'] + groups['workers']) | join(',') }}
+masters: {{ groups['masters'] | join(',') }}
+workers: {{ groups['workers'] | join(',') }}
+k8s: @masters,@workers
+
+# Node aliases (IPs sourced from inventory)
+{% for host in groups['masters'] + groups['workers'] %}
+{{ host }}: {{ hostvars[host].ansible_host }}
+{% endfor %}

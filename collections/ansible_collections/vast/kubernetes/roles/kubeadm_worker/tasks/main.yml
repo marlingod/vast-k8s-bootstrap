@@ -1,0 +1,30 @@
+---
+- name: Check if node is already joined
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf
+
+- name: Copy join command from local control machine
+  ansible.builtin.copy:
+    src: ./k8s-join-command.sh
+    dest: /tmp/k8s-join-command.sh
+    mode: '0700'
+  when: not kubelet_conf.stat.exists
+
+- name: Read join command
+  ansible.builtin.slurp:
+    src: /tmp/k8s-join-command.sh
+  register: join_command_content
+  when: not kubelet_conf.stat.exists
+
+- name: Join worker to cluster
+  # Append --node-name so the worker registers under its inventory name.
+  ansible.builtin.command: "{{ (join_command_content.content | b64decode | trim) }} --node-name={{ inventory_hostname }}"
+  register: join_result
+  changed_when: join_result.rc == 0
+  when: not kubelet_conf.stat.exists
+
+- name: Clean up join command file
+  ansible.builtin.file:
+    path: /tmp/k8s-join-command.sh
+    state: absent

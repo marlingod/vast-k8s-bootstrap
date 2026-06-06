@@ -1,0 +1,6 @@
+ansible>=9.0
+ansible-lint>=24.0
+kubernetes>=29.0
+pyyaml
+jsonpatch
+kubernetes-validate

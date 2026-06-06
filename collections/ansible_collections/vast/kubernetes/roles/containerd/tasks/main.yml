@@ -1,0 +1,144 @@
+---
+# Install containerd from Docker's repo, set SystemdCgroup=true, and force-enable
+# the CRI plugin. The containerd.io package ships a default config that disables
+# CRI, which breaks kubeadm preflight ("unknown service runtime.v1.RuntimeService").
+
+- name: Disable swap
+  ansible.builtin.command: swapoff -a
+  changed_when: false
+
+- name: Remove swap from fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '.*swap.*'
+    state: absent
+
+- name: Load required kernel modules
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - overlay
+    - br_netfilter
+
+- name: Persist kernel modules on boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k8s.conf
+    mode: '0644'
+    content: |
+      overlay
+      br_netfilter
+
+- name: Set sysctl parameters for Kubernetes
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/k8s.conf
+    reload: true
+  loop:
+    - {name: 'net.bridge.bridge-nf-call-iptables', value: '1'}
+    - {name: 'net.bridge.bridge-nf-call-ip6tables', value: '1'}
+    - {name: 'net.ipv4.ip_forward', value: '1'}
+
+- name: Ensure /etc/apt/keyrings exists (Debian)
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+  when: ansible_os_family == "Debian"
+
+- name: Remove legacy Docker apt config (Debian)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/docker.list
+    - /etc/apt/sources.list.d/download_docker_com_linux_ubuntu_stable.list
+    - /etc/apt/trusted.gpg.d/download_docker_com_linux_ubuntu.gpg
+  when: ansible_os_family == "Debian"
+
+- name: Install Docker-repo prerequisites (Debian)
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - software-properties-common
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Download Docker GPG key (Debian)
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: '0644'
+    force: true
+  when: ansible_os_family == "Debian"
+
+- name: Add Docker repository (Debian)
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ 'amd64' if ansible_architecture == 'x86_64' else ansible_architecture }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    state: present
+    filename: docker
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Install containerd (Debian)
+  ansible.builtin.apt:
+    name: containerd.io
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Install Docker repo prerequisites (RHEL)
+  ansible.builtin.yum:
+    name:
+      - yum-utils
+      - device-mapper-persistent-data
+      - lvm2
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Add Docker repository (RHEL)
+  ansible.builtin.yum_repository:
+    name: docker-ce
+    description: Docker CE Stable
+    baseurl: https://download.docker.com/linux/centos/$releasever/$basearch/stable
+    gpgcheck: true
+    gpgkey: https://download.docker.com/linux/centos/gpg
+    enabled: true
+  when: ansible_os_family == "RedHat"
+
+- name: Install containerd (RHEL)
+  ansible.builtin.yum:
+    name: containerd.io
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Create containerd config directory
+  ansible.builtin.file:
+    path: /etc/containerd
+    state: directory
+    mode: '0755'
+
+- name: Generate default containerd config
+  ansible.builtin.shell: containerd config default > /etc/containerd/config.toml
+  changed_when: true
+  notify: Restart containerd
+
+- name: Ensure CRI plugin is enabled (defensive)
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: '^disabled_plugins\s*=.*$'
+    replace: 'disabled_plugins = []'
+  notify: Restart containerd
+
+- name: Enable SystemdCgroup in containerd
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: 'SystemdCgroup = false'
+    replace: 'SystemdCgroup = true'
+  notify: Restart containerd

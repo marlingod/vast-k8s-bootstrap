@@ -1,0 +1,21 @@
+---
+# Install the VAST CSI driver via Helm. Assumes a running K8s cluster.
+# Tag: csi   — `make csi` or `ansible-playbook ... --tags csi`.
+
+- name: CSI | install NFS client on storage targets
+  hosts: nfs_targets
+  become: true
+  gather_facts: true
+  tags: [csi, csi_nfs]
+  roles:
+    - vast.kubernetes.nfs_client
+
+- name: CSI | install Helm + snapshot CRDs + VAST CSI driver
+  hosts: csi_controller
+  become: true
+  gather_facts: true
+  tags: [csi]
+  roles:
+    - vast.kubernetes.helm_install
+    - vast.kubernetes.snapshot_crds
+    - vast.kubernetes.vast_csi

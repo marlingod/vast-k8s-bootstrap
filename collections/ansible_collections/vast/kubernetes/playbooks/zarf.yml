@@ -1,0 +1,25 @@
+---
+# Air-gapped VAST DataEngine deployment via Zarf. Assumes a running K8s
+# cluster. If using the VAST CSI driver as the default StorageClass, run
+# csi.yml first.
+# Tag: zarf
+
+- name: Zarf | tune inotify on every K8s node
+  hosts: k8s_nodes
+  become: true
+  gather_facts: true
+  tags: [zarf, zarf_inotify]
+  roles:
+    - vast.kubernetes.inotify_limits
+
+- name: Zarf | install CLI, fetch packages, deploy DataEngine
+  hosts: zarf_controller
+  become: true
+  gather_facts: true
+  tags: [zarf]
+  roles:
+    - vast.kubernetes.zarf_install
+    - vast.kubernetes.zarf_packages
+    - vast.kubernetes.storage_class
+    - vast.kubernetes.knative_crds
+    - vast.kubernetes.dataengine_deploy

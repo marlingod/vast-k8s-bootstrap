@@ -1,0 +1,5 @@
+---
+helm_version: "v3.16.0"
+helm_arch: amd64
+helm_install_dir: /usr/local/bin
+helm_kubeconfig: /etc/kubernetes/admin.conf

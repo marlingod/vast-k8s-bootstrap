@@ -1,0 +1,13 @@
+---
+k8s_users_kubeconfig: /etc/kubernetes/admin.conf
+k8s_users_output_dir: "{{ playbook_dir }}/../kubeconfigs"
+users: []
+# Schema for each entry of `users:`
+#   - name: alice              # K8s identity / SA name
+#     auth: cert               # cert | token
+#     role: cluster-admin      # ClusterRole to bind
+#     namespace: kube-system   # only for token auth (SA namespace)
+#     group: ""                # optional cert O= field
+#     cert_days: 365           # cert validity (cert auth)
+#     cluster_name: ca-tenant-k8s
+#     api_endpoint: https://10.143.2.26:6443

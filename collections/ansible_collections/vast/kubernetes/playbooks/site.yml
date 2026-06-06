@@ -1,0 +1,18 @@
+---
+# Top-level orchestrator. Run a single phase via `--tags <tag>`:
+#   k8s   → bootstrap kubeadm cluster
+#   csi   → install VAST CSI driver
+#   zarf  → install VAST DataEngine via Zarf
+#   users → provision K8s users
+
+- import_playbook: k8s_cluster.yml
+  tags: [k8s, site]
+
+- import_playbook: csi.yml
+  tags: [csi, site]
+
+- import_playbook: zarf.yml
+  tags: [zarf, site]
+
+- import_playbook: users.yml
+  tags: [users, site]

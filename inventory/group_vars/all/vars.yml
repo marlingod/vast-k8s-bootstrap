@@ -1,0 +1,104 @@
+---
+# Non-secret defaults for every play. Secrets are sourced from vault.yml
+# via the vault_* indirection convention.
+#
+# Edit this file freely. Do NOT put secrets here — encrypt them in vault.yml.
+
+# --- SSH / sudo identity (passwords come from vault.yml) ---
+ansible_user: vastdata
+ansible_password: "{{ vault_ansible_password }}"
+ansible_become_password: "{{ vault_ansible_become_password }}"
+
+# =========================================================================
+# k8s_cluster (k8s-setup playbook)
+# =========================================================================
+# apt/yum repo path resolves to: v{{ kubernetes_version }}
+kubernetes_version: "1.35"
+# Flannel default pod network. Must match what Flannel expects.
+pod_network_cidr: "10.244.0.0/16"
+flannel_version: "v0.27.4"
+
+# =========================================================================
+# csi (VAST CSI driver playbook)
+# =========================================================================
+csi_namespace: vastcsi
+csi_release_name: csi-driver
+vast_csi_helm_repo_name: vastcsi
+vast_csi_helm_repo_url: https://vast-data.github.io/vast-csi
+vast_csi_chart_name: vastcsi
+vast_csi_chart_version: ""   # empty = latest; pin "2.6.5" for prod
+
+csi_driver_name: vastdriver.vastdata.com
+vast_secret_name: vast-csi-secret
+
+# VAST cluster / VMS connection
+vms_endpoint: var203.selab.vastdata.com
+vms_tenant: "ca-tenant"
+verify_ssl: false
+
+# Auth (token preferred; user/pass fallback). Sourced from vault.yml.
+vms_token: "{{ vault_vms_token }}"
+vms_username: "{{ vault_vms_username }}"
+vms_password: "{{ vault_vms_password }}"
+
+install_snapshot_crds: true
+snapshot_crds_version: v7.0.1
+
+storage_classes:
+  ca-sc1:
+    vipPoolFQDN: cavipool.selab-var203.selab.vastdata.com
+    vipPoolFQDNRandomPrefix: true
+    storagePath: /ca-storage
+    viewPolicy: ca-tenant-nfs-policy
+    deletionPolicy: Delete
+  ca-sc2:
+    vipPool: ca-vip-pool
+    storagePath: /ca-nfs
+    viewPolicy: ca-tenant-nfs-policy
+    deletionPolicy: Delete
+
+# =========================================================================
+# zarf (DataEngine playbook)
+# =========================================================================
+zarf_detect_existing: true
+zarf_version: "v0.60.0"
+zarf_arch: "amd64"
+zarf_install_dir: /usr/local/bin
+zarf_log_level: debug
+zarf_registry_hpa_auto_size: true
+legacy_init_rename: true
+
+zarf_packages:
+  source: upload
+  dir: "/home/{{ ansible_user }}/vast-zarf-packages"
+  bundle_url: ""
+  operator_bundle_path: ""
+  operator_init_path: /Users/yemalin.godonou/Documents/vast/dataengine/packages/zarf-init-amd64-v0.60.0.tar.zst
+  operator_dataengine_path: /Users/yemalin.godonou/Documents/vast/dataengine/packages/zarf-package-dataengine-amd64-1.0.0.tar.zst
+
+zarf_init_package_path: "{{ zarf_packages.dir }}/zarf-init-amd64-v0.60.0.tar.zst"
+zarf_dataengine_package_path: "{{ zarf_packages.dir }}/zarf-package-dataengine-amd64-1.0.0.tar.zst"
+
+inotify_max_user_instances: 8192
+inotify_max_user_watches: 524288
+
+storage:
+  detect: true
+  provisioner: byo
+  class_name: ca-sc2
+  local_path:
+    source: local
+    manifest_path: local-path-storage-v0.0.32.yaml
+    version: v0.0.32
+    release_url: "https://raw.githubusercontent.com/rancher/local-path-provisioner/{version}/deploy/local-path-storage.yaml"
+
+knative_crds:
+  source: local
+  manifest_path: knative-operator-crds-v1.17.1.yaml
+  version: knative-v1.17.1
+  release_url: "https://github.com/knative/operator/releases/download/{version}/operator.yaml"
+
+vast_namespaces:
+  - vast-dataengine
+  - knative-eventing
+  - knative-serving

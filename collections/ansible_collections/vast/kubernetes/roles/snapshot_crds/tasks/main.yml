@@ -1,0 +1,23 @@
+---
+# Install external-snapshotter CRDs + snapshot-controller. Skipped entirely if
+# install_snapshot_crds=false (e.g. cluster already has them from another source).
+
+- name: Skip — install_snapshot_crds is false
+  ansible.builtin.debug:
+    msg: "install_snapshot_crds=false — skipping."
+  when: not install_snapshot_crds
+
+- name: Apply snapshot manifests
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ item }}"
+    kubeconfig: "{{ csi_kubeconfig }}"
+  loop:
+    - "{{ snapshot_base }}/client/config/crd/snapshot.storage.k8s.io_volumesnapshotclasses.yaml"
+    - "{{ snapshot_base }}/client/config/crd/snapshot.storage.k8s.io_volumesnapshotcontents.yaml"
+    - "{{ snapshot_base }}/client/config/crd/snapshot.storage.k8s.io_volumesnapshots.yaml"
+    - "{{ snapshot_base }}/deploy/kubernetes/snapshot-controller/rbac-snapshot-controller.yaml"
+    - "{{ snapshot_base }}/deploy/kubernetes/snapshot-controller/setup-snapshot-controller.yaml"
+  when: install_snapshot_crds
+  vars:
+    snapshot_base: "https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/{{ snapshot_crds_version }}"

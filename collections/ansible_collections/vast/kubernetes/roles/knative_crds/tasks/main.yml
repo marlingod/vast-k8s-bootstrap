@@ -1,0 +1,96 @@
+---
+# Pre-install knative-operator CRDs because Helm's `crds/` directory installs
+# them only on the FIRST helm install and never recreates if deleted. Symptom
+# this prevents: "CustomResourceDefinition not found" on chart deploy.
+
+- name: Validate knative_crds.source
+  ansible.builtin.fail:
+    msg: "knative_crds.source={{ knative_crds.source }} is invalid. Use: local | download."
+  when: knative_crds.source not in ['local', 'download']
+
+- name: Check which required CRDs exist
+  kubernetes.core.k8s_info:
+    kind: CustomResourceDefinition
+    name: "{{ item }}"
+    kubeconfig: "{{ knative_kubeconfig }}"
+  loop: "{{ required_crds }}"
+  register: crd_check
+
+- name: Set needs_install flag
+  ansible.builtin.set_fact:
+    crds_missing: "{{ (crd_check.results | selectattr('resources', 'equalto', []) | list | length) > 0 }}"
+
+- name: Skip — all required CRDs already present
+  ansible.builtin.debug:
+    msg: "All required knative-operator CRDs present — skipping."
+  when: not crds_missing
+
+- name: local | apply bundled CRD manifest
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ role_path }}/files/{{ knative_crds.manifest_path }}"
+    kubeconfig: "{{ knative_kubeconfig }}"
+  when:
+    - crds_missing
+    - knative_crds.source == 'local'
+
+- name: download | fetch upstream operator.yaml
+  ansible.builtin.get_url:
+    url: "{{ knative_crds.release_url | replace('{version}', knative_crds.version) }}"
+    dest: /tmp/knative-op.yaml
+    mode: '0644'
+    timeout: 120
+  when:
+    - crds_missing
+    - knative_crds.source == 'download'
+
+- name: download | extract only CustomResourceDefinition documents
+  ansible.builtin.shell: |
+    set -e
+    awk '/^---/{if(keep)print buf"---";buf="";keep=0;next}
+         /^kind: CustomResourceDefinition/{keep=1}
+         {buf=buf $0"\n"}
+         END{if(keep)print buf}' /tmp/knative-op.yaml > /tmp/knative-crds.yaml
+  args:
+    executable: /bin/bash
+  changed_when: true
+  when:
+    - crds_missing
+    - knative_crds.source == 'download'
+
+- name: download | apply extracted CRDs
+  kubernetes.core.k8s:
+    state: present
+    src: /tmp/knative-crds.yaml
+    kubeconfig: "{{ knative_kubeconfig }}"
+  when:
+    - crds_missing
+    - knative_crds.source == 'download'
+
+# Helm refuses to "import" pre-existing CRDs unless they carry the Helm
+# ownership label + release annotations. Stamp them so the chart deploy
+# succeeds. Safe to re-run.
+- name: Adopt CRDs (Helm label)
+  kubernetes.core.k8s:
+    state: patched
+    kubeconfig: "{{ knative_kubeconfig }}"
+    kind: CustomResourceDefinition
+    name: "{{ item }}"
+    definition:
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: Helm
+  loop: "{{ required_crds }}"
+
+- name: Adopt CRDs (Helm release annotations)
+  kubernetes.core.k8s:
+    state: patched
+    kubeconfig: "{{ knative_kubeconfig }}"
+    kind: CustomResourceDefinition
+    name: "{{ item }}"
+    definition:
+      metadata:
+        annotations:
+          meta.helm.sh/release-name: vast-knative-operator
+          meta.helm.sh/release-namespace: vast-dataengine
+  loop: "{{ required_crds }}"

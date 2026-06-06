@@ -1,0 +1,72 @@
+---
+# Install kubeadm + kubelet + kubectl from pkgs.k8s.io. Holds packages so an
+# apt upgrade doesn't yank them out from under a running cluster.
+
+- name: Download Kubernetes GPG key (Debian)
+  ansible.builtin.get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/Release.key"
+    dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+    mode: '0644'
+    force: true
+  when: ansible_os_family == "Debian"
+
+- name: Remove legacy Kubernetes apt config (Debian)
+  ansible.builtin.shell: |
+    rm -f /etc/apt/sources.list.d/kubernetes.list
+    rm -f /etc/apt/trusted.gpg.d/pkgs_k8s_io_core_stable_v*_deb.gpg
+  changed_when: false
+  when: ansible_os_family == "Debian"
+
+- name: Add Kubernetes repository (Debian)
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/ /"
+    state: present
+    filename: kubernetes
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Add Kubernetes repository (RHEL)
+  ansible.builtin.yum_repository:
+    name: kubernetes
+    description: Kubernetes
+    baseurl: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/rpm/"
+    gpgcheck: true
+    gpgkey: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/rpm/repodata/repomd.xml.key"
+    enabled: true
+  when: ansible_os_family == "RedHat"
+
+- name: Install Kubernetes components (Debian)
+  ansible.builtin.apt:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Install Kubernetes components (RHEL)
+  ansible.builtin.yum:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+    disable_excludes: kubernetes
+  when: ansible_os_family == "RedHat"
+
+- name: Hold Kubernetes packages (Debian)
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+  when: ansible_os_family == "Debian"
+
+- name: Enable kubelet service
+  ansible.builtin.systemd:
+    name: kubelet
+    enabled: true
+    state: started

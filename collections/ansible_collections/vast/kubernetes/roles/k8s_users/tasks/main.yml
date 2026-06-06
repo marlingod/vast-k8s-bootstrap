@@ -1,0 +1,13 @@
+---
+# Ansible-native K8s user provisioning. Two modes (per-user `auth:` field):
+#   token  — ServiceAccount + Secret-token + ClusterRoleBinding + kubeconfig
+#   cert   — generate keypair + CSR; submit + approve K8s CSR; emit kubeconfig
+#
+# The bash equivalents live under user-setup/ for ops who don't want to install
+# an Ansible controller.
+
+- name: Provision each user
+  ansible.builtin.include_tasks: user.yml
+  loop: "{{ users }}"
+  loop_control:
+    loop_var: user

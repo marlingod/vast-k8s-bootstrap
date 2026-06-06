@@ -1,0 +1,175 @@
+---
+- name: "{{ user.name }} | validate auth mode"
+  ansible.builtin.fail:
+    msg: "user.auth must be 'token' or 'cert', got '{{ user.auth | default('') }}'"
+  when: user.auth not in ['token', 'cert']
+
+# ── token branch ────────────────────────────────────────────────────────
+- name: "{{ user.name }} | ServiceAccount"
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ k8s_users_kubeconfig }}"
+    definition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: "{{ user.name }}"
+        namespace: "{{ user.namespace | default('kube-system') }}"
+  when: user.auth == 'token'
+
+- name: "{{ user.name }} | Secret (SA token)"
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ k8s_users_kubeconfig }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      type: kubernetes.io/service-account-token
+      metadata:
+        name: "{{ user.name }}-token"
+        namespace: "{{ user.namespace | default('kube-system') }}"
+        annotations:
+          kubernetes.io/service-account.name: "{{ user.name }}"
+  when: user.auth == 'token'
+
+- name: "{{ user.name }} | ClusterRoleBinding (token branch)"
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ k8s_users_kubeconfig }}"
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: "{{ user.name }}-{{ user.role | default('cluster-admin') }}"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: "{{ user.role | default('cluster-admin') }}"
+      subjects:
+        - kind: ServiceAccount
+          name: "{{ user.name }}"
+          namespace: "{{ user.namespace | default('kube-system') }}"
+  when: user.auth == 'token'
+
+- name: "{{ user.name }} | wait for SA token to populate"
+  kubernetes.core.k8s_info:
+    kind: Secret
+    name: "{{ user.name }}-token"
+    namespace: "{{ user.namespace | default('kube-system') }}"
+    kubeconfig: "{{ k8s_users_kubeconfig }}"
+  register: sa_secret
+  retries: 5
+  delay: 2
+  until:
+    - sa_secret.resources | length > 0
+    - sa_secret.resources[0].data.token is defined
+  when: user.auth == 'token'
+  no_log: true
+
+# ── cert branch ─────────────────────────────────────────────────────────
+- name: "{{ user.name }} | private key (cert branch)"
+  community.crypto.openssl_privatekey:
+    path: "/tmp/{{ user.name }}.key"
+    size: 2048
+    mode: '0600'
+  when: user.auth == 'cert'
+
+- name: "{{ user.name }} | CSR (cert branch)"
+  community.crypto.openssl_csr:
+    path: "/tmp/{{ user.name }}.csr"
+    privatekey_path: "/tmp/{{ user.name }}.key"
+    common_name: "{{ user.name }}"
+    organization_name: "{{ user.group | default(omit) }}"
+  when: user.auth == 'cert'
+
+- name: "{{ user.name }} | slurp CSR for K8s submission"
+  ansible.builtin.slurp:
+    src: "/tmp/{{ user.name }}.csr"
+  register: csr_blob
+  when: user.auth == 'cert'
+
+- name: "{{ user.name }} | delete stale K8s CSR"
+  kubernetes.core.k8s:
+    state: absent
+    kind: CertificateSigningRequest
+    name: "{{ user.name }}-csr"
+    kubeconfig: "{{ k8s_users_kubeconfig }}"
+  when: user.auth == 'cert'
+
+- name: "{{ user.name }} | submit K8s CSR"
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ k8s_users_kubeconfig }}"
+    definition:
+      apiVersion: certificates.k8s.io/v1
+      kind: CertificateSigningRequest
+      metadata:
+        name: "{{ user.name }}-csr"
+      spec:
+        request: "{{ csr_blob.content }}"
+        signerName: kubernetes.io/kube-apiserver-client
+        expirationSeconds: "{{ (user.cert_days | default(365)) * 24 * 3600 }}"
+        usages: ["client auth"]
+  when: user.auth == 'cert'
+
+- name: "{{ user.name }} | approve CSR"
+  ansible.builtin.command: "kubectl certificate approve {{ user.name }}-csr"
+  environment:
+    KUBECONFIG: "{{ k8s_users_kubeconfig }}"
+  changed_when: true
+  when: user.auth == 'cert'
+
+- name: "{{ user.name }} | wait for signed cert"
+  kubernetes.core.k8s_info:
+    kind: CertificateSigningRequest
+    name: "{{ user.name }}-csr"
+    kubeconfig: "{{ k8s_users_kubeconfig }}"
+  register: csr_signed
+  retries: 10
+  delay: 2
+  until:
+    - csr_signed.resources | length > 0
+    - csr_signed.resources[0].status.certificate is defined
+  when: user.auth == 'cert'
+
+- name: "{{ user.name }} | ClusterRoleBinding (cert branch)"
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ k8s_users_kubeconfig }}"
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: "{{ user.name }}-{{ user.role | default('cluster-admin') }}"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: "{{ user.role | default('cluster-admin') }}"
+      subjects:
+        - kind: User
+          name: "{{ user.name }}"
+          apiGroup: rbac.authorization.k8s.io
+  when: user.auth == 'cert'
+
+# ── emit kubeconfig (both branches) ─────────────────────────────────────
+- name: "{{ user.name }} | read cluster CA from admin.conf"
+  ansible.builtin.shell: |
+    grep certificate-authority-data {{ k8s_users_kubeconfig }} | awk '{print $2}'
+  register: cluster_ca_b64
+  changed_when: false
+  no_log: true
+
+- name: "{{ user.name }} | write kubeconfig"
+  ansible.builtin.template:
+    src: kubeconfig.yaml.j2
+    dest: "{{ k8s_users_output_dir }}/{{ user.name }}.kubeconfig"
+    mode: '0600'
+  delegate_to: localhost
+  no_log: true
+  vars:
+    _cluster_name: "{{ user.cluster_name | default('vastde-cluster') }}"
+    _ca_data: "{{ cluster_ca_b64.stdout }}"
+    _api_endpoint: "{{ user.api_endpoint | default('https://' + hostvars[inventory_hostname].ansible_host + ':6443') }}"
+    _token: "{{ (sa_secret.resources[0].data.token | b64decode) if user.auth == 'token' else '' }}"
+    _client_cert: "{{ csr_signed.resources[0].status.certificate if user.auth == 'cert' else '' }}"
+    _client_key: "{{ lookup('file', '/tmp/' + user.name + '.key') | b64encode if user.auth == 'cert' else '' }}"

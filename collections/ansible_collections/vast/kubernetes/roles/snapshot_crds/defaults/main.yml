@@ -1,0 +1,4 @@
+---
+install_snapshot_crds: true
+snapshot_crds_version: v7.0.1
+csi_kubeconfig: /etc/kubernetes/admin.conf

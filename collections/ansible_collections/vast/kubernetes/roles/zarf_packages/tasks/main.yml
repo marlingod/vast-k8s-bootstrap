@@ -1,0 +1,164 @@
+---
+# Ensure the two VAST Zarf .tar.zst packages exist on the controller (the
+# master) before plays 03/05 need them. Three sources are supported:
+#
+#   local    — both files already at zarf_packages.dir on the master
+#   download — fetch zarf_packages.bundle_url from a URL the master can reach
+#   upload   — scp from the operator's local machine (two flavors: "files"
+#              or "bundle" depending on which paths are set)
+
+- name: Validate zarf_packages.source
+  ansible.builtin.fail:
+    msg: "zarf_packages.source={{ zarf_packages.source }} is not supported. Choose: local, download, upload."
+  when: zarf_packages.source not in ['local', 'download', 'upload']
+
+- name: Ensure packages dir exists
+  ansible.builtin.file:
+    path: "{{ zarf_packages.dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Stat zarf init package
+  ansible.builtin.stat:
+    path: "{{ zarf_init_package_path }}"
+  register: init_pkg
+
+- name: Stat zarf DataEngine package
+  ansible.builtin.stat:
+    path: "{{ zarf_dataengine_package_path }}"
+  register: de_pkg
+
+- name: Set needs_fetch flag
+  ansible.builtin.set_fact:
+    needs_fetch: "{{ (not init_pkg.stat.exists) or (not de_pkg.stat.exists) }}"
+
+- name: Skip — both packages already present
+  ansible.builtin.debug:
+    msg: "Both .tar.zst already in {{ zarf_packages.dir }} — skipping fetch."
+  when: not needs_fetch
+
+# ── source=local — fail if missing ──────────────────────────────────────
+- name: local | fail when files missing
+  ansible.builtin.fail:
+    msg: |
+      zarf_packages.source=local but a .tar.zst is missing on the master.
+      Missing init:       {{ zarf_init_package_path }} (present={{ init_pkg.stat.exists }})
+      Missing dataengine: {{ zarf_dataengine_package_path }} (present={{ de_pkg.stat.exists }})
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'local'
+
+# ── source=download — master fetches outer bundle ───────────────────────
+- name: download | validate bundle_url is set
+  ansible.builtin.fail:
+    msg: "zarf_packages.source=download but zarf_packages.bundle_url is empty."
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'download'
+    - (zarf_packages.bundle_url | default('') | length) == 0
+
+- name: download | derive bundle path on master
+  ansible.builtin.set_fact:
+    bundle_master_path: "{{ zarf_packages.dir }}/{{ zarf_packages.bundle_url | basename }}"
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'download'
+
+- name: download | fetch outer bundle
+  ansible.builtin.get_url:
+    url: "{{ zarf_packages.bundle_url }}"
+    dest: "{{ bundle_master_path }}"
+    mode: '0644'
+    timeout: 600
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'download'
+
+# ── source=upload — detect mode (files vs bundle) ───────────────────────
+- name: upload | detect mode
+  ansible.builtin.set_fact:
+    upload_mode: >-
+      {{
+        'files' if (
+            (zarf_packages.operator_init_path | default('') | length) > 0
+            and (zarf_packages.operator_dataengine_path | default('') | length) > 0
+          )
+        else ('bundle' if (zarf_packages.operator_bundle_path | default('') | length) > 0
+              else 'unset')
+      }}
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'upload'
+
+- name: upload | validate operator path(s)
+  ansible.builtin.fail:
+    msg: "zarf_packages.source=upload but no operator path provided."
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'upload'
+    - upload_mode == 'unset'
+
+- name: upload/files | scp init .tar.zst
+  ansible.builtin.copy:
+    src: "{{ zarf_packages.operator_init_path }}"
+    dest: "{{ zarf_init_package_path }}"
+    mode: '0644'
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'upload'
+    - upload_mode == 'files'
+    - not init_pkg.stat.exists
+
+- name: upload/files | scp dataengine .tar.zst
+  ansible.builtin.copy:
+    src: "{{ zarf_packages.operator_dataengine_path }}"
+    dest: "{{ zarf_dataengine_package_path }}"
+    mode: '0644'
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'upload'
+    - upload_mode == 'files'
+    - not de_pkg.stat.exists
+
+- name: upload/bundle | derive bundle path on master
+  ansible.builtin.set_fact:
+    bundle_master_path: "{{ zarf_packages.dir }}/{{ zarf_packages.operator_bundle_path | basename }}"
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'upload'
+    - upload_mode == 'bundle'
+
+- name: upload/bundle | scp outer bundle
+  ansible.builtin.copy:
+    src: "{{ zarf_packages.operator_bundle_path }}"
+    dest: "{{ bundle_master_path }}"
+    mode: '0644'
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'upload'
+    - upload_mode == 'bundle'
+
+# ── extract outer bundle if download or upload/bundle ───────────────────
+- name: Extract outer bundle into packages dir
+  ansible.builtin.unarchive:
+    src: "{{ bundle_master_path }}"
+    dest: "{{ zarf_packages.dir }}"
+    remote_src: true
+    creates: "{{ zarf_init_package_path }}"
+  when:
+    - needs_fetch
+    - (zarf_packages.source == 'download') or
+      (zarf_packages.source == 'upload' and upload_mode == 'bundle')
+
+# ── final verify ────────────────────────────────────────────────────────
+- name: Verify init package present
+  ansible.builtin.stat:
+    path: "{{ zarf_init_package_path }}"
+  register: init_pkg_final
+  failed_when: not init_pkg_final.stat.exists
+
+- name: Verify DataEngine package present
+  ansible.builtin.stat:
+    path: "{{ zarf_dataengine_package_path }}"
+  register: de_pkg_final
+  failed_when: not de_pkg_final.stat.exists

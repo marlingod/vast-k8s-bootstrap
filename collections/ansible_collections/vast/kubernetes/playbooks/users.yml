@@ -1,0 +1,14 @@
+---
+# Provision K8s users (RBAC + tokens or client certs) via the k8s_users role.
+# Tag: users
+#
+# Drive with a `users:` list in inventory/group_vars/all/vars.yml or via -e:
+#   ansible-playbook playbooks/users.yml -e '{"users":[{"name":"alice","auth":"cert"}]}'
+
+- name: Users | provision K8s users
+  hosts: masters
+  become: true
+  gather_facts: true
+  tags: [users]
+  roles:
+    - vast.kubernetes.k8s_users

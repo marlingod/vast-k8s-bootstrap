@@ -1,0 +1,13 @@
+---
+# NFS client tools must be on the host OS for any pod (including the VAST CSI
+# driver) to mount NFS PVCs. Missing nfs-common is the #1 cause of "PVC mount
+# timeout" in mixed-distro fleets.
+
+- name: Install NFS client package
+  ansible.builtin.package:
+    name: "{{ 'nfs-common' if ansible_os_family == 'Debian' else 'nfs-utils' }}"
+    state: present
+
+- name: Verify mount.nfs is on PATH
+  ansible.builtin.command: command -v mount.nfs
+  changed_when: false

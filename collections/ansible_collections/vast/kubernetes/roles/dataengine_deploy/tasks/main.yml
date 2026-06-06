@@ -1,0 +1,131 @@
+---
+# Run `zarf init` + namespace setup + `zarf package deploy` of the DataEngine
+# package. The two `zarf` calls remain ansible.builtin.command because there
+# is no native module; they are guarded with stat-based `creates:` analogs and
+# `changed_when:` so re-runs are idempotent.
+
+# ── 1. zarf init ─────────────────────────────────────────────────────────
+- name: Check if zarf namespace exists
+  kubernetes.core.k8s_info:
+    kind: Namespace
+    name: zarf
+    kubeconfig: "{{ de_kubeconfig }}"
+  register: zarf_ns
+
+- name: Pre-5.4.1-sp2 file rename quirk
+  ansible.builtin.shell: |
+    set -e
+    dir=$(dirname "{{ zarf_init_package_path }}")
+    old="$dir/vast-zarf-mutator-{{ zarf_arch }}-{{ zarf_version }}.tar.zst"
+    new="{{ zarf_init_package_path }}"
+    if [ -f "$old" ] && [ ! -f "$new" ]; then
+      mv "$old" "$new"
+      echo "renamed $old -> $new"
+    fi
+  register: legacy_rename
+  changed_when: "'renamed' in legacy_rename.stdout"
+  when:
+    - zarf_ns.resources | length == 0
+    - legacy_init_rename | default(true) | bool
+
+- name: Verify zarf init package present
+  ansible.builtin.stat:
+    path: "{{ zarf_init_package_path }}"
+  register: init_pkg_stat
+  when: zarf_ns.resources | length == 0
+
+- name: Fail — zarf init package missing
+  ansible.builtin.fail:
+    msg: "zarf init package not found at {{ zarf_init_package_path }}"
+  when:
+    - zarf_ns.resources | length == 0
+    - not init_pkg_stat.stat.exists
+
+- name: Detect existing default StorageClass
+  kubernetes.core.k8s_info:
+    kind: StorageClass
+    kubeconfig: "{{ de_kubeconfig }}"
+  register: all_sc
+  when: zarf_ns.resources | length == 0
+
+- name: Set _has_default_sc
+  ansible.builtin.set_fact:
+    _has_default_sc: >-
+      {{
+        (all_sc.resources
+         | selectattr('metadata.annotations', 'defined')
+         | selectattr('metadata.annotations["storageclass.kubernetes.io/is-default-class"]', 'equalto', 'true')
+         | list | length) > 0
+      }}
+  when: zarf_ns.resources | length == 0
+
+- name: Run zarf init
+  ansible.builtin.command: >-
+    zarf init
+    --architecture {{ zarf_arch }}
+    {{ zarf_init_package_path | basename }}
+    --confirm
+    --log-level {{ zarf_log_level }}
+    {{ '--set REGISTRY_HPA_AUTO_SIZE=true' if (zarf_registry_hpa_auto_size | bool) else '' }}
+    {{ ('--storage-class ' + storage.class_name) if (not _has_default_sc) else '' }}
+  args:
+    chdir: "{{ zarf_init_package_path | dirname }}"
+  environment:
+    KUBECONFIG: "{{ de_kubeconfig }}"
+  when: zarf_ns.resources | length == 0
+  register: zarf_init_out
+  async: 900
+  poll: 15
+  changed_when: zarf_init_out.rc == 0
+
+# ── 2. namespaces + labels + secret sync ─────────────────────────────────
+- name: Create VAST namespaces
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ de_kubeconfig }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ item }}"
+        labels:
+          zarf.dev/vast: mutate
+  loop: "{{ vast_namespaces }}"
+
+- name: Strip zarf.dev/agent=ignore label (so VAST mutator runs)
+  kubernetes.core.k8s_json_patch:
+    kind: Namespace
+    name: "{{ item }}"
+    kubeconfig: "{{ de_kubeconfig }}"
+    patch:
+      - op: remove
+        path: /metadata/labels/zarf.dev~1agent
+  loop: "{{ vast_namespaces }}"
+  failed_when: false  # label may not exist
+
+# ── 3. zarf package deploy ───────────────────────────────────────────────
+- name: Verify DataEngine package present
+  ansible.builtin.stat:
+    path: "{{ zarf_dataengine_package_path }}"
+  register: de_pkg_stat
+
+- name: Fail — DataEngine package missing
+  ansible.builtin.fail:
+    msg: "DataEngine package not found at {{ zarf_dataengine_package_path }}"
+  when: not de_pkg_stat.stat.exists
+
+- name: zarf package deploy
+  ansible.builtin.command: >-
+    zarf package deploy
+    --architecture {{ zarf_arch }}
+    {{ zarf_dataengine_package_path | basename }}
+    --confirm
+    --log-level {{ zarf_log_level }}
+  args:
+    chdir: "{{ zarf_dataengine_package_path | dirname }}"
+  environment:
+    KUBECONFIG: "{{ de_kubeconfig }}"
+  register: zarf_deploy_out
+  async: 900
+  poll: 15
+  changed_when: "'succeeded' in (zarf_deploy_out.stdout | default(''))"

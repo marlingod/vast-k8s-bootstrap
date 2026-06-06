@@ -1,0 +1,19 @@
+---
+profile: production
+
+exclude_paths:
+  - .cache/
+  - .github/
+  - examples/
+  - docs/
+  - user-setup/  # bash scripts; covered by shellcheck
+
+# Skip the no-role-prefix rule because we use the shared `vault_*` prefix
+# convention across all roles (intentional).
+skip_list:
+  - var-naming[no-role-prefix]
+
+enable_list:
+  - fqcn[action-core]
+  - no-changed-when
+  - no-handler

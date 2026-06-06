@@ -1,0 +1,143 @@
+---
+# Ensure a default StorageClass exists. `zarf init` hangs ~15min waiting on
+# the seed-registry PVC if none is present. Four provisioner branches:
+#   local-path → install rancher local-path-provisioner + mark default
+#   vast-csi   → no-op (csidriver module already did the work)
+#   byo        → verify the named class exists; mark default if none yet
+#   none       → fail-fast if no default exists
+
+- name: Validate storage.provisioner
+  ansible.builtin.fail:
+    msg: "storage.provisioner={{ storage.provisioner }} is invalid. Use: local-path | vast-csi | byo | none."
+  when: storage.provisioner not in ['local-path', 'vast-csi', 'byo', 'none']
+
+- name: Detect existing default StorageClass
+  kubernetes.core.k8s_info:
+    kind: StorageClass
+    kubeconfig: "{{ sc_kubeconfig }}"
+  register: all_sc
+
+- name: Compute default StorageClass name (if any)
+  ansible.builtin.set_fact:
+    default_sc_name: >-
+      {{
+        (all_sc.resources
+         | selectattr('metadata.annotations', 'defined')
+         | selectattr('metadata.annotations["storageclass.kubernetes.io/is-default-class"]', 'equalto', 'true')
+         | map(attribute='metadata.name') | list | first) | default('')
+      }}
+
+- name: Skip — default StorageClass already exists
+  ansible.builtin.debug:
+    msg: "Default StorageClass present: '{{ default_sc_name }}' — skipping (storage.detect=true)"
+  when:
+    - default_sc_name | length > 0
+    - storage.detect | bool
+
+- name: Fail — provisioner=none and no default exists
+  ansible.builtin.fail:
+    msg: "No default StorageClass and storage.provisioner=none. `zarf init` will hang."
+  when:
+    - default_sc_name | length == 0
+    - storage.provisioner == 'none'
+
+# ── provisioner=local-path ───────────────────────────────────────────────
+- name: local-path | apply bundled manifest
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ role_path }}/files/{{ storage.local_path.manifest_path }}"
+    kubeconfig: "{{ sc_kubeconfig }}"
+  when:
+    - default_sc_name | length == 0
+    - storage.provisioner == 'local-path'
+    - storage.local_path.source == 'local'
+
+- name: local-path (download) | apply manifest from GitHub
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ storage.local_path.release_url | replace('{version}', storage.local_path.version) }}"
+    kubeconfig: "{{ sc_kubeconfig }}"
+  when:
+    - default_sc_name | length == 0
+    - storage.provisioner == 'local-path'
+    - storage.local_path.source == 'download'
+
+- name: local-path | wait for provisioner Deployment ready
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    namespace: local-path-storage
+    name: local-path-provisioner
+    wait: true
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 120
+    kubeconfig: "{{ sc_kubeconfig }}"
+  when:
+    - default_sc_name | length == 0
+    - storage.provisioner == 'local-path'
+
+- name: local-path | mark StorageClass as default
+  kubernetes.core.k8s:
+    state: patched
+    kubeconfig: "{{ sc_kubeconfig }}"
+    kind: StorageClass
+    name: "{{ storage.class_name }}"
+    definition:
+      metadata:
+        annotations:
+          storageclass.kubernetes.io/is-default-class: "true"
+  when:
+    - default_sc_name | length == 0
+    - storage.provisioner == 'local-path'
+
+# ── provisioner=byo ───────────────────────────────────────────────────────
+- name: byo | verify named StorageClass exists
+  kubernetes.core.k8s_info:
+    kind: StorageClass
+    name: "{{ storage.class_name }}"
+    kubeconfig: "{{ sc_kubeconfig }}"
+  register: byo_sc
+  failed_when: byo_sc.resources | length == 0
+  when:
+    - default_sc_name | length == 0
+    - storage.provisioner == 'byo'
+
+- name: byo | mark named StorageClass as default
+  kubernetes.core.k8s:
+    state: patched
+    kubeconfig: "{{ sc_kubeconfig }}"
+    kind: StorageClass
+    name: "{{ storage.class_name }}"
+    definition:
+      metadata:
+        annotations:
+          storageclass.kubernetes.io/is-default-class: "true"
+  when:
+    - default_sc_name | length == 0
+    - storage.provisioner == 'byo'
+
+# ── provisioner=vast-csi ─────────────────────────────────────────────────
+- name: vast-csi | no-op (csidriver module owns StorageClass)
+  ansible.builtin.debug:
+    msg: "provisioner=vast-csi — relying on csi.yml to have installed a default class."
+  when:
+    - default_sc_name | length == 0
+    - storage.provisioner == 'vast-csi'
+
+# ── final verify ─────────────────────────────────────────────────────────
+- name: Re-check default StorageClass
+  kubernetes.core.k8s_info:
+    kind: StorageClass
+    kubeconfig: "{{ sc_kubeconfig }}"
+  register: all_sc_final
+
+- name: Assert a default StorageClass is now present
+  ansible.builtin.assert:
+    that:
+      - >
+        (all_sc_final.resources
+         | selectattr('metadata.annotations', 'defined')
+         | selectattr('metadata.annotations["storageclass.kubernetes.io/is-default-class"]', 'equalto', 'true')
+         | list | length) > 0
+    fail_msg: "No default StorageClass present after storage_class role ran."
