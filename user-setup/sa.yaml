@@ -1,5 +1,0 @@
-apiVersion: v1                                                                                                                                                       
-kind: ServiceAccount                                                                                                                                                 
-metadata:                                                                                                                                                          
-  name: de-admin         # e.g. yemalin-admin                                                                                                                  
-  namespace: kube-system        # convention for cluster admins; can be any ns   

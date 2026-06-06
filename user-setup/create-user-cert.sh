@@ -1,42 +1,52 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
-# ─── EDIT THESE ────────────────────────────────────────────────────────────
-NEW_USER="malin-admin"
-USER_GROUP=""                              # optional, e.g. "system:masters" (becomes O= in cert)
-ROLE="cluster-admin"
-API_ENDPOINT="https://10.143.2.247:6443"
-OUTPUT_KUBECONFIG="$HOME/.kube/${NEW_USER}-cert.yaml"
-EXISTING_KUBECONFIG="$HOME/.kube/config"   # ← USE THE MASTER'S OWN admin.conf
-CERT_DAYS=365                              # client cert validity (in seconds for CSR)
-WORKDIR="$(mktemp -d)"
-trap 'rm -rf "${WORKDIR}"' EXIT
-# ───────────────────────────────────────────────────────────────────────────
+# Provision a K8s user backed by an X.509 client cert (CSR submitted to the
+# cluster's signer). Runs locally on a machine with cluster-admin kubeconfig.
+#
+# Flags (or env vars): --user, --group, --role, --endpoint, --output, --days
 
-# Sanity checks
-[ -r "$EXISTING_KUBECONFIG" ] || { echo "ERROR: $EXISTING_KUBECONFIG not found"; exit 1; }
-command -v openssl >/dev/null || { echo "ERROR: openssl is required"; exit 1; }
+NEW_USER="${NEW_USER:-k8s-cert-admin}"
+USER_GROUP="${USER_GROUP:-}"
+ROLE="${ROLE:-cluster-admin}"
+API_ENDPOINT="${API_ENDPOINT:-}"
+OUTPUT_KUBECONFIG="${OUTPUT_KUBECONFIG:-}"
+EXISTING_KUBECONFIG="${EXISTING_KUBECONFIG:-$HOME/.kube/config}"
+CERT_DAYS="${CERT_DAYS:-365}"
 
-export KUBECONFIG="$EXISTING_KUBECONFIG"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --user)     NEW_USER="$2"; shift 2 ;;
+    --group)    USER_GROUP="$2"; shift 2 ;;
+    --role)     ROLE="$2"; shift 2 ;;
+    --endpoint) API_ENDPOINT="$2"; shift 2 ;;
+    --output)   OUTPUT_KUBECONFIG="$2"; shift 2 ;;
+    --days)     CERT_DAYS="$2"; shift 2 ;;
+    *) echo "unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
 
+[ -n "${API_ENDPOINT}" ] || { echo "ERROR: --endpoint required" >&2; exit 2; }
+OUTPUT_KUBECONFIG="${OUTPUT_KUBECONFIG:-$HOME/.kube/${NEW_USER}-cert.yaml}"
+[ -r "${EXISTING_KUBECONFIG}" ] || { echo "ERROR: ${EXISTING_KUBECONFIG} not found" >&2; exit 1; }
+command -v openssl >/dev/null || { echo "ERROR: openssl required" >&2; exit 1; }
+
+export KUBECONFIG="${EXISTING_KUBECONFIG}"
+WORKDIR="$(mktemp -d)"; trap 'rm -rf "${WORKDIR}"' EXIT
+KEY_FILE="${WORKDIR}/${NEW_USER}.key"; CSR_FILE="${WORKDIR}/${NEW_USER}.csr"
 CSR_NAME="${NEW_USER}-csr"
-KEY_FILE="${WORKDIR}/${NEW_USER}.key"
-CSR_FILE="${WORKDIR}/${NEW_USER}.csr"
-CRT_FILE="${WORKDIR}/${NEW_USER}.crt"
+EXPIRATION_SECONDS=$(( CERT_DAYS * 24 * 3600 ))
 
-echo "1) Generating private key + CSR for CN=${NEW_USER}${USER_GROUP:+, O=${USER_GROUP}}..."
+echo "1) Generating private key + CSR..."
 openssl genrsa -out "${KEY_FILE}" 2048 2>/dev/null
 SUBJ="/CN=${NEW_USER}"
 [ -n "${USER_GROUP}" ] && SUBJ="${SUBJ}/O=${USER_GROUP}"
 openssl req -new -key "${KEY_FILE}" -out "${CSR_FILE}" -subj "${SUBJ}"
-
 CSR_B64=$(base64 < "${CSR_FILE}" | tr -d '\n')
-EXPIRATION_SECONDS=$(( CERT_DAYS * 24 * 3600 ))
 
-echo "2) Submitting CertificateSigningRequest ${CSR_NAME}..."
-# Delete any stale CSR with the same name (CSRs are cluster-scoped, immutable once approved)
+echo "2) Submitting CSR ${CSR_NAME}..."
 kubectl delete csr "${CSR_NAME}" --ignore-not-found >/dev/null
-
 kubectl apply -f - <<CSR_END
 apiVersion: certificates.k8s.io/v1
 kind: CertificateSigningRequest
@@ -53,16 +63,16 @@ CSR_END
 echo "3) Approving CSR..."
 kubectl certificate approve "${CSR_NAME}"
 
-echo "4) Waiting for the signer to issue the certificate..."
-for i in 1 2 3 4 5 6 7 8 9 10; do
+echo "4) Waiting for signer..."
+CRT_B64=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
   CRT_B64=$(kubectl get csr "${CSR_NAME}" -o jsonpath='{.status.certificate}' 2>/dev/null || true)
   [ -n "${CRT_B64}" ] && break
   sleep 1
 done
-[ -n "${CRT_B64}" ] || { echo "ERROR: certificate was not issued in time"; exit 1; }
-echo "${CRT_B64}" | base64 -d > "${CRT_FILE}"
+[ -n "${CRT_B64}" ] || { echo "ERROR: cert was not issued" >&2; exit 1; }
 
-echo "5) Creating ClusterRoleBinding ${NEW_USER}-${ROLE} (subject kind: User)..."
+echo "5) ClusterRoleBinding..."
 kubectl apply -f - <<RBAC_END
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -78,24 +88,20 @@ subjects:
     apiGroup: rbac.authorization.k8s.io
 RBAC_END
 
-echo "6) Extracting cluster CA from current kubeconfig..."
-CURRENT_CLUSTER=$(kubectl config view --minify -o jsonpath='{.clusters[0].name}')
 CA_B64=$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
 if [ -z "${CA_B64}" ]; then
   CA_PATH=$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority}')
-  [ -r "${CA_PATH}" ] || { echo "ERROR: cannot read cluster CA (${CA_PATH})"; exit 1; }
   CA_B64=$(base64 < "${CA_PATH}" | tr -d '\n')
 fi
-
 KEY_B64=$(base64 < "${KEY_FILE}" | tr -d '\n')
 
-echo "7) Writing kubeconfig to ${OUTPUT_KUBECONFIG}..."
+echo "6) Writing kubeconfig to ${OUTPUT_KUBECONFIG}..."
 mkdir -p "$(dirname "${OUTPUT_KUBECONFIG}")"
 cat > "${OUTPUT_KUBECONFIG}" <<KUBECFG_END
 apiVersion: v1
 kind: Config
 clusters:
-  - name: vastde-cluster
+  - name: vast-cluster
     cluster:
       server: ${API_ENDPOINT}
       certificate-authority-data: ${CA_B64}
@@ -107,18 +113,16 @@ users:
 contexts:
   - name: ${NEW_USER}-ctx
     context:
-      cluster: vastde-cluster
+      cluster: vast-cluster
       user: ${NEW_USER}
       namespace: default
 current-context: ${NEW_USER}-ctx
 KUBECFG_END
 chmod 600 "${OUTPUT_KUBECONFIG}"
 
-echo
-echo "8) Testing the new kubeconfig..."
+echo "7) Test:"
 KUBECONFIG="${OUTPUT_KUBECONFIG}" kubectl auth whoami
 KUBECONFIG="${OUTPUT_KUBECONFIG}" kubectl get nodes
 
 echo
-echo "✓ Done. Use:   export KUBECONFIG=${OUTPUT_KUBECONFIG}"
-echo "  Cert valid for ~${CERT_DAYS} days. Re-run this script to rotate."
+echo "Done. Cert valid ~${CERT_DAYS} days. Re-run to rotate."
