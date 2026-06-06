@@ -1,0 +1,21 @@
+---
+# Master playbook — imports each numbered step in order.
+#
+# Usage:
+#   cd ansible
+#   ansible-playbook -i inventory.ini site.yml
+#
+# Re-run a single step:
+#   ansible-playbook -i inventory.ini 03-zarf-init.yml
+#
+# Smoke-test (opt-in, not in site.yml):
+#   ansible-playbook -i inventory.ini 06-verify.yml
+
+- import_playbook: 00-inotify-limits.yml
+- import_playbook: 01-install-zarf.yml
+- import_playbook: 01b-fetch-packages.yml
+- import_playbook: 02-storage-class.yml
+- import_playbook: 03-zarf-init.yml
+- import_playbook: 04-namespaces.yml
+- import_playbook: 04b-knative-crds.yml
+- import_playbook: 05-deploy-dataengine.yml

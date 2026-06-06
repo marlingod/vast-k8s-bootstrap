@@ -1,0 +1,63 @@
+---
+# Render values.yaml.j2 → ../values.rendered.yaml, then helm upgrade --install.
+
+- name: Install VAST CSI Driver Helm chart
+  hosts: csi_controller
+  gather_facts: no
+
+  vars:
+    # Rendered file lands on the csi_controller host (master by default).
+    # /tmp is fine — it's regenerated on every run from the template.
+    rendered_values: "/tmp/values.rendered.yaml"
+
+  tasks:
+    - name: Render values.yaml from template
+      ansible.builtin.template:
+        src: values.yaml.j2
+        dest: "{{ rendered_values }}"
+        mode: '0600'
+
+    - name: Add Helm repo
+      ansible.builtin.command:
+        cmd: "helm repo add {{ vast_csi_helm_repo_name }} {{ vast_csi_helm_repo_url }}"
+      register: helm_repo_add
+      failed_when: helm_repo_add.rc != 0 and 'already exists' not in helm_repo_add.stderr
+      changed_when: helm_repo_add.rc == 0
+
+    - name: Update Helm repos
+      ansible.builtin.command:
+        cmd: "helm repo update {{ vast_csi_helm_repo_name }}"
+      changed_when: false
+
+    - name: Install / upgrade VAST CSI Driver
+      ansible.builtin.command:
+        cmd: >
+          helm upgrade --install {{ csi_release_name }}
+          {{ vast_csi_helm_repo_name }}/{{ vast_csi_chart_name }}
+          -f {{ rendered_values }}
+          -n {{ csi_namespace }}
+          {{ ('--version ' + vast_csi_chart_version) if (vast_csi_chart_version | length > 0) else '' }}
+      register: helm_install
+      changed_when: "'STATUS: deployed' in helm_install.stdout"
+
+    - name: Display Helm release status
+      ansible.builtin.debug:
+        var: helm_install.stdout_lines
+
+    - name: Show driver pods
+      ansible.builtin.command: "kubectl -n {{ csi_namespace }} get pods"
+      register: pod_status
+      changed_when: false
+
+    - name: Driver pods
+      ansible.builtin.debug:
+        var: pod_status.stdout_lines
+
+    - name: Show storage classes
+      ansible.builtin.command: kubectl get sc
+      register: sc_status
+      changed_when: false
+
+    - name: Storage classes
+      ansible.builtin.debug:
+        var: sc_status.stdout_lines

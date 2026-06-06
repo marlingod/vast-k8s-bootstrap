@@ -1,0 +1,85 @@
+---
+# `zarf init` bootstraps the Zarf agent + in-cluster registry. Idempotent:
+# skipped if the `zarf` namespace already exists on the cluster.
+
+- name: Zarf init
+  hosts: zarf_controller
+  gather_facts: no
+
+  tasks:
+    - name: Check if Zarf is already initialized (zarf namespace present)
+      ansible.builtin.shell: |
+        kubectl get ns zarf --ignore-not-found -o name
+      register: zarf_ns
+      changed_when: false
+
+    - name: Skip — Zarf already initialized
+      ansible.builtin.debug:
+        msg: "Zarf already initialized (zarf namespace exists) — skipping"
+      when: zarf_ns.stdout | length > 0
+
+    # Pre-5.4.1-sp2 quirk (per KB): VAST renamed the init tarball; old releases
+    # ship it under the old name. Rename if the old file exists alongside the
+    # configured path. Opt-out via legacy_init_rename: false.
+    - name: Pre-5.4.1-sp2 file rename (vast-zarf-mutator → zarf-init)
+      ansible.builtin.shell: |
+        set -e
+        dir=$(dirname "{{ zarf_init_package_path }}")
+        old="$dir/vast-zarf-mutator-{{ zarf_arch }}-{{ zarf_version }}.tar.zst"
+        new="{{ zarf_init_package_path }}"
+        if [ -f "$old" ] && [ ! -f "$new" ]; then
+          mv "$old" "$new"
+          echo "renamed $old -> $new"
+        fi
+      register: legacy_rename
+      changed_when: "'renamed' in legacy_rename.stdout"
+      when:
+        - zarf_ns.stdout | length == 0
+        - legacy_init_rename | default(true) | bool
+
+    - name: Verify zarf init package exists on the controller
+      ansible.builtin.stat:
+        path: "{{ zarf_init_package_path }}"
+      register: init_pkg_stat
+      when: zarf_ns.stdout | length == 0
+
+    - name: Fail — zarf init package missing
+      ansible.builtin.fail:
+        msg: |
+          zarf init package not found at: {{ zarf_init_package_path }}
+          Set zarf_init_package_path in group_vars/all.yml to the local path of
+          zarf-init-<arch>-<version>.tar.zst (provided by VAST SE inside the
+          vast_dataengine_release_<N>_<pipeline>.tar.gz bundle).
+      when: zarf_ns.stdout | length == 0 and not init_pkg_stat.stat.exists
+
+    # Per KB: only pass --storage-class when no default StorageClass exists.
+    # 02-storage-class.yml should have just ensured one exists, but we re-check
+    # so this playbook is safe to run standalone.
+    - name: Detect default StorageClass
+      ansible.builtin.shell: |
+        kubectl get sc -o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{"\n"}{end}'
+      register: default_sc
+      changed_when: false
+      when: zarf_ns.stdout | length == 0
+
+    - name: Run zarf init (chdir into packages dir so zarf finds the init file)
+      ansible.builtin.command: >
+        zarf init
+        --architecture {{ zarf_arch }}
+        {{ zarf_init_package_path | basename }}
+        --confirm
+        --log-level {{ zarf_log_level }}
+        {{ '--set REGISTRY_HPA_AUTO_SIZE=true' if (zarf_registry_hpa_auto_size | bool) else '' }}
+        {{ ('--storage-class ' + storage.class_name) if (default_sc.stdout | length == 0) else '' }}
+      args:
+        chdir: "{{ zarf_init_package_path | dirname }}"
+      when: zarf_ns.stdout | length == 0
+      register: zarf_init_out
+      # zarf init can be slow on big packages — allow up to 15 min
+      async: 900
+      poll: 15
+
+    - name: Show zarf init last 10 lines
+      ansible.builtin.debug:
+        msg: "{{ zarf_init_out.stdout_lines[-10:] if zarf_init_out.stdout_lines is defined else 'no output' }}"
+      when: zarf_ns.stdout | length == 0

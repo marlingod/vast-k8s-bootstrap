@@ -1,0 +1,85 @@
+---
+# Smoke test: create PVC + StatefulSet on a storage class, wait Ready, clean up.
+# Opt-in (not in site.yml). Cleanup runs via `always` even on failure.
+#
+# Override storage class:
+#   ansible-playbook -i inventory.ini 05-verify.yml -e verify_sc=georgia-sc2
+
+- name: Verify VAST CSI Driver
+  hosts: csi_controller
+  gather_facts: no
+
+  vars:
+    verify_sc: "{{ (storage_classes.keys() | list)[0] }}"
+
+  tasks:
+    - block:
+        - name: Apply test PVC
+          ansible.builtin.shell: |
+            cat <<EOF | kubectl apply -f -
+            apiVersion: v1
+            kind: PersistentVolumeClaim
+            metadata:
+              name: vast-pvc-1
+            spec:
+              accessModes: [ReadWriteMany]
+              resources:
+                requests:
+                  storage: 1Gi
+              storageClassName: {{ verify_sc }}
+            EOF
+          register: pvc_apply
+          changed_when: "'created' in pvc_apply.stdout or 'configured' in pvc_apply.stdout"
+
+        - name: Wait for PVC Bound
+          ansible.builtin.command:
+            cmd: kubectl wait --for=jsonpath='{.status.phase}'=Bound pvc/vast-pvc-1 --timeout=120s
+          changed_when: false
+
+        - name: Apply test StatefulSet
+          ansible.builtin.shell: |
+            cat <<'EOF' | kubectl apply -f -
+            apiVersion: apps/v1
+            kind: StatefulSet
+            metadata:
+              name: test-app-1
+            spec:
+              serviceName: test-service-1
+              replicas: 5
+              selector:
+                matchLabels: { app: test-app-1 }
+              template:
+                metadata:
+                  labels: { app: test-app-1 }
+                spec:
+                  containers:
+                    - name: my-frontend
+                      image: busybox
+                      volumeMounts:
+                        - mountPath: /shared
+                          name: my-shared-volume
+                      command: ['/bin/sh', '-c', 'while true; do date -Iseconds >> /shared/$HOSTNAME; sleep 1; done']
+                  volumes:
+                    - name: my-shared-volume
+                      persistentVolumeClaim:
+                        claimName: vast-pvc-1
+            EOF
+          changed_when: false
+
+        - name: Wait for StatefulSet rollout
+          ansible.builtin.command:
+            cmd: kubectl rollout status statefulset/test-app-1 --timeout=180s
+          changed_when: false
+
+        - name: Verification passed
+          ansible.builtin.debug:
+            msg: "PVC bound and 5 replicas Running on {{ verify_sc }}."
+
+      always:
+        - name: Clean up test StatefulSet
+          ansible.builtin.command: kubectl delete statefulset test-app-1 --ignore-not-found
+          changed_when: false
+
+        - name: Clean up test PVC
+          ansible.builtin.command: kubectl delete pvc vast-pvc-1 --ignore-not-found
+          changed_when: false

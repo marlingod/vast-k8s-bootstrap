@@ -1,0 +1,122 @@
+---
+# Copy this file to all.yml and fill in real values.
+# all.yml is gitignored — never commit secrets.
+
+# --- SSH / sudo credentials for every host in inventory.ini ---
+# ansible_user is set per-host in inventory.ini, passwords live here.
+#   - Leave ansible_password empty if you use SSH key auth.
+#   - Leave ansible_become_password empty if your user has passwordless sudo.
+ansible_password: ""
+ansible_become_password: ""
+
+# --- Zarf binary (downloaded if missing) ---
+# 'detect: true' skips install if zarf is already on PATH on the controller.
+zarf_detect_existing: true
+zarf_version: "v0.60.0"
+zarf_arch: "amd64"           # amd64 | arm64
+zarf_install_dir: /usr/local/bin
+
+# --- Zarf packages ---
+# Important: ALL paths under `zarf_packages.dir` are interpreted on the MASTER
+# (the zarf_controller host) — that's where zarf init / package deploy actually
+# run. The operator's Mac just orchestrates over SSH; the files must end up on
+# the master.
+#
+# Supplied by VAST SE inside vast_dataengine_release_<N>_<pipeline>.tar.gz.
+#
+# Three sources (01b-fetch-packages.yml branches on this):
+#   local    — both .tar.zst files are ALREADY on the master under
+#              zarf_packages.dir. Fails fast if either is missing.
+#   download — fetch zarf_packages.bundle_url FROM the master (the master needs
+#              egress to bundle_url) into zarf_packages.dir, then extract.
+#   upload   — the outer .tar.gz is on the OPERATOR's local machine at
+#              zarf_packages.operator_bundle_path. Ansible copies it up to the
+#              master, then extracts in place. Use when the master is air-gapped
+#              but you can ferry the bundle by hand.
+zarf_packages:
+  source: local                              # local | download | upload
+  dir: /home/{{ ansible_user }}/vast-zarf-packages   # ABSOLUTE path on the master
+  bundle_url: ""                             # source=download — SE-provided URL
+                                             # e.g. https://files.vastdata.com/vast_dataengine_release_5.4.3sp4_2420502.tar.gz
+
+  # source=upload — provide EITHER (A) the outer bundle OR (B) the two
+  # .tar.zst files directly. The playbook detects which based on what's set.
+  # (A) outer bundle on operator (copies to master, extracts in place):
+  operator_bundle_path: ""                   # e.g. /Users/you/Downloads/vast_dataengine_release_5.4.3sp4_2420502.tar.gz
+  # (B) two already-extracted .tar.zst files on operator (scp each one):
+  operator_init_path: ""                     # e.g. /Users/you/packages/zarf-init-amd64-v0.60.0.tar.zst
+  operator_dataengine_path: ""               # e.g. /Users/you/packages/zarf-package-dataengine-amd64-1.0.0.tar.zst
+
+zarf_init_package_path:       "{{ zarf_packages.dir }}/zarf-init-amd64-v0.60.0.tar.zst"
+zarf_dataengine_package_path: "{{ zarf_packages.dir }}/zarf-package-dataengine-amd64-1.0.0.tar.zst"
+
+# Pre-5.4.1-sp2 quirk: VAST renamed the init tarball. If the old name
+# (vast-zarf-mutator-*.tar.zst) is sitting in the packages dir, rename it
+# to zarf-init-*.tar.zst before `zarf init`. Safe to leave on; no-op otherwise.
+legacy_init_rename: true
+
+# --- inotify limits (required by VAST DataEngine Zarf package) ---
+inotify_max_user_instances: 8192
+inotify_max_user_watches:   524288
+
+# ════════════════ Storage ════════════════
+# zarf init hangs ~15min if there is no default StorageClass. This block
+# tells the storage playbook (02-storage-class.yml) what to do about it.
+#
+# provisioner options (PICK ONE):
+#   local-path  — install rancher's local-path-provisioner + mark its
+#                 StorageClass default. Easy lab default. Not for prod.
+#   vast-csi    — do nothing here; assume the `csidriver` ansible module
+#                 already ran and left a VAST-backed StorageClass marked
+#                 default. Production path.
+#   byo         — "bring your own". Don't install anything. Just verify
+#                 the StorageClass named in `storage.class_name` exists
+#                 (and is default). Use this if you provisioned the SC
+#                 out-of-band (Longhorn, OpenEBS, EBS, NFS, etc.).
+#   none        — fail-fast if no default StorageClass exists. No install,
+#                 no verify-by-name. Use for strict environments where you
+#                 want the playbook to refuse to proceed.
+#
+# detect: when true (default), skip install if ANY default StorageClass
+# already exists on the cluster. Set false to force install/verify even
+# if a default is already present.
+#
+# class_name: the StorageClass name passed to `zarf init --storage-class`
+# when no default exists. With provisioner=local-path it MUST be
+# "local-path"; with byo/vast-csi set it to your actual SC name.
+storage:
+  detect: true
+  provisioner: local-path          # local-path | vast-csi | byo | none
+  class_name: local-path
+
+  # Only used when provisioner=local-path. Two sources:
+  #   local    — apply the manifest bundled with this module (no internet needed)
+  #   download — fetch from GitHub raw URL at run time (needs egress to github.com)
+  local_path:
+    source: local                  # local | download
+    manifest_path: manifests/local-path-storage-v0.0.32.yaml
+    version: v0.0.32               # only used when source=download
+    release_url: "https://raw.githubusercontent.com/rancher/local-path-provisioner/{version}/deploy/local-path-storage.yaml"
+
+# --- Knative operator CRDs ---
+# Helm doesn't reliably re-install CRDs from a chart's crds/ directory; we
+# install them separately to guarantee they're present before the
+# vast-knative-operator chart runs its post-install health check.
+#
+# Symptom this prevents: "knativeeventings.operator.knative.dev:
+# CustomResourceDefinition not found" during zarf package deploy.
+knative_crds:
+  source: local                    # local | download
+  manifest_path: manifests/knative-operator-crds-v1.17.1.yaml
+  version: knative-v1.17.1         # only used when source=download
+  release_url: "https://github.com/knative/operator/releases/download/{version}/operator.yaml"
+
+# --- VAST namespaces (created + labeled for Zarf mutation) ---
+vast_namespaces:
+  - vast-dataengine
+  - knative-eventing
+  - knative-serving
+
+# --- Zarf init knobs ---
+zarf_registry_hpa_auto_size: true
+zarf_log_level: debug

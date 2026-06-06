@@ -1,0 +1,142 @@
+---
+# Install the knative-operator CRDs separately because Helm's `crds/` directory
+# handling is unreliable: those CRDs are installed only on the FIRST helm
+# install of a chart, and aren't recreated if they were deleted (by
+# `zarf package remove`, manual kubectl delete, or anything else).
+#
+# Symptom this prevents:
+#   ERR failed to deploy package: unable to deploy component "vast-knative-operator":
+#     knativeeventings.operator.knative.dev: CustomResourceDefinition not found
+#     knativeservings.operator.knative.dev:  CustomResourceDefinition not found
+#     context deadline exceeded
+#
+# Two sources (same pattern as 02-storage-class.yml + 01b-fetch-packages.yml):
+#   local    — apply the manifest bundled with this module (no internet needed)
+#   download — fetch from upstream knative-operator GitHub release at run time
+
+- name: Ensure knative-operator CRDs exist on the cluster
+  hosts: zarf_controller
+  gather_facts: no
+
+  vars:
+    required_crds:
+      - knativeeventings.operator.knative.dev
+      - knativeservings.operator.knative.dev
+
+  tasks:
+    - name: Validate knative_crds.source
+      ansible.builtin.fail:
+        msg: |
+          knative_crds.source={{ knative_crds.source }} is not supported.
+          Choose one of: local, download.
+      when: knative_crds.source not in ['local', 'download']
+
+    - name: Check which required CRDs exist
+      ansible.builtin.command: kubectl get crd {{ item }}
+      register: crd_check
+      changed_when: false
+      failed_when: false
+      loop: "{{ required_crds }}"
+
+    - name: Set "needs install" flag
+      ansible.builtin.set_fact:
+        crds_missing: "{{ (crd_check.results | selectattr('rc', 'ne', 0) | list | length) > 0 }}"
+
+    - name: Skip — all required CRDs already present
+      ansible.builtin.debug:
+        msg: "All required knative-operator CRDs present — skipping."
+      when: not crds_missing
+
+    # ── source=local — apply manifest bundled with this module ──
+    - name: local | resolve bundled manifest path on operator
+      ansible.builtin.set_fact:
+        kn_manifest_local: "{{ playbook_dir }}/{{ knative_crds.manifest_path }}"
+      when:
+        - crds_missing
+        - knative_crds.source == 'local'
+
+    - name: local | fail if bundled manifest missing on operator
+      ansible.builtin.assert:
+        that: "lookup('first_found', files=[kn_manifest_local], errors='ignore') is not none"
+        fail_msg: |
+          Bundled knative-operator CRD manifest not found on the OPERATOR at:
+          {{ kn_manifest_local }}
+          Either place the file there, OR set knative_crds.source=download.
+      delegate_to: localhost
+      when:
+        - crds_missing
+        - knative_crds.source == 'local'
+
+    - name: local | ship manifest to master then kubectl apply
+      ansible.builtin.copy:
+        content: "{{ lookup('file', kn_manifest_local) }}"
+        dest: /tmp/knative-operator-crds.yaml
+        mode: '0644'
+      when:
+        - crds_missing
+        - knative_crds.source == 'local'
+
+    - name: local | apply CRDs on master
+      ansible.builtin.command: kubectl apply -f /tmp/knative-operator-crds.yaml
+      register: kn_apply_local
+      changed_when: "'created' in kn_apply_local.stdout or 'configured' in kn_apply_local.stdout"
+      when:
+        - crds_missing
+        - knative_crds.source == 'local'
+
+    # ── source=download — fetch upstream operator.yaml, apply only the CRDs ──
+    - name: download | fetch upstream operator.yaml + extract + apply CRDs on master
+      ansible.builtin.shell: |
+        set -e
+        cd /tmp
+        rm -f knative-op.yaml knative-doc-*
+        curl -sL "{{ knative_crds.release_url | replace('{version}', knative_crds.version) }}" -o knative-op.yaml
+        # Extract only CRD documents into a single file (works on any awk)
+        awk '/^---/{if(keep)print buf"---";buf="";keep=0;next}
+             /^kind: CustomResourceDefinition/{keep=1}
+             {buf=buf $0"\n"}
+             END{if(keep)print buf}' knative-op.yaml > knative-crds.yaml
+        kubectl apply -f knative-crds.yaml
+        rm -f knative-op.yaml knative-crds.yaml knative-doc-*
+      args:
+        executable: /bin/bash
+      register: kn_apply_dl
+      changed_when: "'created' in kn_apply_dl.stdout or 'configured' in kn_apply_dl.stdout"
+      when:
+        - crds_missing
+        - knative_crds.source == 'download'
+
+    # ── Helm ownership adoption ──
+    # Helm refuses to "import" a pre-existing CRD into a chart unless it
+    # carries Helm's ownership label + release annotations. Without these,
+    # the chart deploy fails with:
+    #   "invalid ownership metadata; label validation error: missing key
+    #    \"app.kubernetes.io/managed-by\": must be set to \"Helm\""
+    # Stamp them on every required CRD before the chart deploy runs. Safe to
+    # re-run (--overwrite); safe for newly-installed AND pre-existing CRDs.
+    - name: Adopt CRDs into the vast-knative-operator Helm release (labels)
+      ansible.builtin.command: >
+        kubectl label crd {{ item }}
+        app.kubernetes.io/managed-by=Helm
+        --overwrite
+      loop: "{{ required_crds }}"
+      changed_when: false  # idempotent stamp; output varies but state converges
+
+    - name: Adopt CRDs into the vast-knative-operator Helm release (annotations)
+      ansible.builtin.command: >
+        kubectl annotate crd {{ item }}
+        meta.helm.sh/release-name=vast-knative-operator
+        meta.helm.sh/release-namespace=vast-dataengine
+        --overwrite
+      loop: "{{ required_crds }}"
+      changed_when: false
+
+    # ── final verify ──
+    - name: Verify required CRDs now present
+      ansible.builtin.command: kubectl get crd {{ item }}
+      loop: "{{ required_crds }}"
+      changed_when: false
+
+    - name: knative-operator CRDs ready
+      ansible.builtin.debug:
+        msg: "CRDs present (Helm-adopted): {{ required_crds | join(', ') }}"

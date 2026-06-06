@@ -1,0 +1,109 @@
+---
+# Create the three VAST namespaces and label them so Zarf's mutating webhook
+# rewrites image refs to point at the in-cluster registry (zarf.dev/vast=mutate).
+
+- name: Create + label VAST namespaces
+  hosts: zarf_controller
+  gather_facts: no
+
+  tasks:
+    - name: Create namespace
+      ansible.builtin.command: kubectl create ns {{ item }}
+      loop: "{{ vast_namespaces }}"
+      register: ns_create
+      changed_when: ns_create.rc == 0
+      failed_when:
+        - ns_create.rc != 0
+        - "'AlreadyExists' not in ns_create.stderr"
+
+    - name: Label namespace with zarf.dev/vast=mutate
+      ansible.builtin.command: >
+        kubectl label ns {{ item }}
+        zarf.dev/vast=mutate
+        --overwrite
+      loop: "{{ vast_namespaces }}"
+      register: ns_label
+      changed_when: "'labeled' in ns_label.stdout"
+
+    # zarf init pre-labels these namespaces with `agent=ignore` when they
+    # already exist, which overrides our `vast=mutate` and bypasses image
+    # rewriting. Remove it so VAST's mutator actually runs.
+    - name: Strip zarf.dev/agent=ignore so the VAST mutator can run
+      ansible.builtin.command: kubectl label ns {{ item }} zarf.dev/agent-
+      loop: "{{ vast_namespaces }}"
+      register: ns_unignore
+      changed_when: "'unlabeled' in ns_unignore.stdout"
+      failed_when:
+        - ns_unignore.rc != 0
+        - "'label \"zarf.dev/agent\" not found' not in ns_unignore.stderr"
+
+    # Sync the zarf/private-registry secret into every VAST namespace so that
+    # post-re-init credential rotation propagates. The Zarf mutator copies the
+    # secret on first mutation only — it does NOT refresh stale copies after
+    # `zarf init` regenerates the registry password. Symptom of skipping this
+    # step: image pulls 401 Unauthorized even with imagePullSecrets set.
+    - name: Sync zarf/private-registry secret into {{ item }}
+      # Strip resourceVersion / uid / managedFields / etc. before re-applying.
+      # Otherwise kubectl apply -f - hits an optimistic-concurrency conflict
+      # ("Operation cannot be fulfilled on secrets ... the object has been
+      # modified") because the zarf agent reconciles the secret between our
+      # GET and APPLY. Stripping those fields makes the apply unconditional.
+      ansible.builtin.shell: |
+        set -euo pipefail
+        kubectl get secret private-registry -n zarf -o json \
+          | python3 -c '
+        import sys, json
+        s = json.load(sys.stdin)
+        m = s.setdefault("metadata", {})
+        for k in ("resourceVersion", "uid", "creationTimestamp",
+                  "managedFields", "ownerReferences", "selfLink",
+                  "generation"):
+            m.pop(k, None)
+        m["namespace"] = "{{ item }}"
+        json.dump(s, sys.stdout)
+        ' \
+          | kubectl apply -f - 2>&1 | tail -1
+      args:
+        executable: /bin/bash
+      loop: "{{ vast_namespaces }}"
+      register: ns_secret_sync
+      # Treat the first apply as a change (created), and subsequent identical
+      # applies as unchanged (configured = same content).
+      changed_when: >-
+        ('created' in ns_secret_sync.stdout)
+        or
+        ('configured' in ns_secret_sync.stdout)
+
+    # If any label was actually stripped AND deployments exist (i.e. this is
+    # a re-run after 05 already deployed), force a rollout restart so existing
+    # pods are re-created via the mutator and pull from the in-cluster registry
+    # instead of the original VAST ECR. Also restart if the registry secret
+    # was actually rotated (ns_secret_sync.changed).
+    #
+    # First run: no deployments exist yet, the `if kubectl get deploy` guard
+    # makes this a no-op. Re-run: any pre-existing pods get recycled and the
+    # new ones get their image refs rewritten.
+    - name: Rollout-restart deployments in {{ item }} (mutator activated)
+      ansible.builtin.shell: |
+        set -e
+        if [ -n "$(kubectl -n {{ item }} get deploy -o name 2>/dev/null)" ]; then
+          kubectl -n {{ item }} rollout restart deploy
+          echo restarted
+        else
+          echo "no deployments yet"
+        fi
+      loop: "{{ vast_namespaces }}"
+      register: ns_restart
+      changed_when: "'restarted' in ns_restart.stdout"
+      when: ns_unignore.changed or ns_secret_sync.changed
+
+    - name: Show labeled namespaces
+      ansible.builtin.command: >
+        kubectl get ns {{ vast_namespaces | join(' ') }}
+        --show-labels
+      register: ns_show
+      changed_when: false
+
+    - name: Namespace status
+      ansible.builtin.debug:
+        msg: "{{ ns_show.stdout_lines }}"

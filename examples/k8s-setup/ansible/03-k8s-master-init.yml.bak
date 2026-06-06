@@ -1,0 +1,110 @@
+---
+# Playbook: Initialize Kubernetes Master Node
+# Usage: ansible-playbook -i inventory.ini 03-k8s-master-init.yml
+
+- name: Initialize Kubernetes Master Node
+  hosts: masters
+  become: yes
+  gather_facts: yes
+
+  vars:
+    pod_network_cidr: "10.244.0.0/16"
+    kubernetes_api_advertise_address: "{{ ansible_default_ipv4.address }}"
+
+  tasks:
+    - name: Check if Kubernetes is already initialized
+      stat:
+        path: /etc/kubernetes/admin.conf
+      register: k8s_init_check
+
+    - name: Initialize Kubernetes master
+      command: >
+        kubeadm init
+        --apiserver-advertise-address={{ kubernetes_api_advertise_address }}
+        --pod-network-cidr={{ pod_network_cidr }}
+        --ignore-preflight-errors=all
+      register: kubeadm_init
+      when: not k8s_init_check.stat.exists
+
+    - name: Display kubeadm init output
+      debug:
+        var: kubeadm_init.stdout_lines
+      when: kubeadm_init is changed
+
+    - name: Create .kube directory for vastdata user
+      file:
+        path: /home/vastdata/.kube
+        state: directory
+        owner: vastdata
+        group: vastdata
+        mode: '0755'
+
+    - name: Copy admin.conf to vastdata user
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/vastdata/.kube/config
+        remote_src: yes
+        owner: vastdata
+        group: vastdata
+        mode: '0600'
+
+    - name: Create .kube directory for root
+      file:
+        path: /root/.kube
+        state: directory
+        mode: '0755'
+
+    - name: Copy admin.conf to root
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: yes
+        mode: '0600'
+
+    - name: Install Flannel CNI
+      become_user: vastdata
+      command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+      register: flannel_install
+      changed_when: "'created' in flannel_install.stdout or 'configured' in flannel_install.stdout"
+
+    - name: Wait for Flannel pods to be ready
+      become_user: vastdata
+      command: kubectl wait --for=condition=ready pod -l app=flannel -n kube-flannel --timeout=120s
+      register: flannel_ready
+      retries: 5
+      delay: 10
+      until: flannel_ready.rc == 0
+      ignore_errors: yes
+
+    - name: Generate join command
+      command: kubeadm token create --print-join-command
+      register: join_command
+      changed_when: false
+
+    - name: Save join command to file
+      copy:
+        content: "{{ join_command.stdout }}"
+        dest: /home/vastdata/k8s-join-command.sh
+        owner: vastdata
+        group: vastdata
+        mode: '0700'
+
+    - name: Display join command
+      debug:
+        msg: "Join command: {{ join_command.stdout }}"
+
+    - name: Fetch join command to local machine
+      fetch:
+        src: /home/vastdata/k8s-join-command.sh
+        dest: ./k8s-join-command.sh
+        flat: yes
+
+    - name: Get cluster status
+      become_user: vastdata
+      command: kubectl get nodes -o wide
+      register: cluster_status
+      changed_when: false
+
+    - name: Display cluster status
+      debug:
+        msg: "{{ cluster_status.stdout_lines }}"

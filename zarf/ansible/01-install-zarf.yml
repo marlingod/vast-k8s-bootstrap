@@ -1,0 +1,53 @@
+---
+# Install the Zarf CLI on the controller (the host that runs `zarf init` /
+# `zarf package deploy`). Skip if already present and zarf_detect_existing=true.
+
+- name: Install Zarf CLI on the controller
+  hosts: zarf_controller
+  gather_facts: yes
+
+  tasks:
+    - name: Check kubectl is on PATH
+      ansible.builtin.shell: command -v kubectl
+      changed_when: false
+
+    - name: Check kubectl can reach the cluster
+      ansible.builtin.command: kubectl cluster-info
+      changed_when: false
+
+    - name: Check for existing zarf binary
+      ansible.builtin.shell: command -v zarf
+      register: zarf_check
+      failed_when: false
+      changed_when: false
+
+    - name: Skip install — zarf already present
+      ansible.builtin.debug:
+        msg: "zarf already installed at {{ zarf_check.stdout }} — skipping (zarf_detect_existing=true)"
+      when: zarf_check.rc == 0 and zarf_detect_existing | bool
+
+    - name: Download Zarf release
+      ansible.builtin.get_url:
+        url: "https://github.com/zarf-dev/zarf/releases/download/{{ zarf_version }}/zarf_{{ zarf_version }}_Linux_{{ zarf_arch }}"
+        dest: "/tmp/zarf_{{ zarf_version }}_{{ zarf_arch }}"
+        mode: '0755'
+        timeout: 120
+      when: zarf_check.rc != 0 or not (zarf_detect_existing | bool)
+
+    - name: Install Zarf binary to {{ zarf_install_dir }}
+      ansible.builtin.copy:
+        src: "/tmp/zarf_{{ zarf_version }}_{{ zarf_arch }}"
+        dest: "{{ zarf_install_dir }}/zarf"
+        mode: '0755'
+        remote_src: yes
+      become: yes
+      when: zarf_check.rc != 0 or not (zarf_detect_existing | bool)
+
+    - name: Display zarf version
+      ansible.builtin.command: zarf version
+      register: zarf_version_out
+      changed_when: false
+
+    - name: Zarf version
+      ansible.builtin.debug:
+        msg: "{{ zarf_version_out.stdout }}"

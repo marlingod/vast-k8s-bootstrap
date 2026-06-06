@@ -1,0 +1,43 @@
+---
+# Install Helm 3 on the local machine if missing, and verify kubectl works.
+
+- name: Install Helm and verify kubectl
+  hosts: csi_controller
+  gather_facts: no
+
+  tasks:
+    - name: Check kubectl is on PATH
+      ansible.builtin.shell: command -v kubectl
+      changed_when: false
+
+    - name: Check kubectl can reach the cluster
+      ansible.builtin.command: kubectl cluster-info
+      changed_when: false
+
+    - name: Check for helm
+      ansible.builtin.shell: command -v helm
+      register: helm_check
+      failed_when: false
+      changed_when: false
+
+    - name: Install Helm 3
+      ansible.builtin.shell: |
+        set -euo pipefail
+        TMP=$(mktemp)
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 -o "$TMP"
+        chmod 700 "$TMP"
+        "$TMP"
+        rm -f "$TMP"
+      args:
+        executable: /bin/bash
+      when: helm_check.rc != 0
+      become: yes
+
+    - name: Display Helm version
+      ansible.builtin.command: helm version --short
+      register: helm_version
+      changed_when: false
+
+    - name: Helm version
+      ansible.builtin.debug:
+        msg: "{{ helm_version.stdout }}"

@@ -1,0 +1,19 @@
+---
+# Install nfs-utils on every host in [nfs_targets], in parallel (forks=10 in
+# ansible.cfg). The package module is idempotent — no probe-before-install
+# needed. PDF page 131: missing NFS client is the #1 cause of PVC mount timeouts.
+
+- name: Install NFS client on nfs_targets
+  hosts: nfs_targets
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Install NFS client package
+      ansible.builtin.package:
+        name: "{{ 'nfs-common' if ansible_os_family == 'Debian' else 'nfs-utils' }}"
+        state: present
+
+    - name: Verify mount.nfs is present
+      ansible.builtin.shell: command -v mount.nfs
+      changed_when: false

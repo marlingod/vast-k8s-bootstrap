@@ -1,0 +1,172 @@
+---
+# Ensure a default StorageClass exists. `zarf init` hangs ~15min on
+# `zarf-seed-registry` waiting for its PVC if no default class is present.
+#
+# Branches on storage.provisioner — see group_vars/all.yml comments for
+# the full set of options. Summary:
+#   local-path → install rancher local-path-provisioner + mark default
+#   vast-csi   → no-op (csidriver module already did the work)
+#   byo        → verify the named StorageClass exists; fail if not
+#   none       → fail-fast if no default StorageClass exists
+
+- name: Ensure a default StorageClass exists
+  hosts: zarf_controller
+  gather_facts: no
+
+  tasks:
+    - name: Validate storage.provisioner is a supported value
+      ansible.builtin.fail:
+        msg: |
+          storage.provisioner={{ storage.provisioner }} is not supported.
+          Choose one of: local-path, vast-csi, byo, none.
+      when: storage.provisioner not in ['local-path', 'vast-csi', 'byo', 'none']
+
+    - name: Detect existing default StorageClass
+      ansible.builtin.shell: |
+        kubectl get sc -o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{"\n"}{end}'
+      register: default_sc
+      changed_when: false
+
+    - name: Skip — default StorageClass already exists and storage.detect is true
+      ansible.builtin.debug:
+        msg: "Default StorageClass present: '{{ default_sc.stdout }}' — skipping (storage.detect=true)"
+      when: default_sc.stdout | length > 0 and storage.detect | bool
+
+    # ── provisioner=none ──────────────────────────────────────────────
+    - name: Fail — provisioner=none and no default StorageClass exists
+      ansible.builtin.fail:
+        msg: |
+          No default StorageClass exists and storage.provisioner=none.
+          Set storage.provisioner to one of: local-path | vast-csi | byo.
+          `zarf init` will hang for ~15 minutes without a default StorageClass.
+      when:
+        - default_sc.stdout | length == 0
+        - storage.provisioner == 'none'
+
+    # ── provisioner=local-path ────────────────────────────────────────
+    - name: local-path | validate storage.local_path.source
+      ansible.builtin.fail:
+        msg: |
+          storage.local_path.source={{ storage.local_path.source }} is not supported.
+          Choose one of: local, download.
+      when:
+        - default_sc.stdout | length == 0
+        - storage.provisioner == 'local-path'
+        - storage.local_path.source not in ['local', 'download']
+
+    # source=local — apply manifest bundled with this module. The manifest
+    # lives on the OPERATOR (alongside the playbook). We read it via lookup()
+    # which runs on the operator, then ship its contents to the master via the
+    # `copy` module with `content:` so `kubectl apply` on the master can read it.
+    - name: local-path (local) | resolve bundled manifest path on operator
+      ansible.builtin.set_fact:
+        lpp_manifest_local: "{{ playbook_dir }}/{{ storage.local_path.manifest_path }}"
+      when:
+        - default_sc.stdout | length == 0
+        - storage.provisioner == 'local-path'
+        - storage.local_path.source == 'local'
+
+    - name: local-path (local) | fail if bundled manifest missing on operator
+      ansible.builtin.assert:
+        that: "lookup('first_found', files=[lpp_manifest_local], errors='ignore') is not none"
+        fail_msg: |
+          Bundled manifest not found on the OPERATOR at: {{ lpp_manifest_local }}
+          Either: (1) place the manifest there, or (2) set storage.local_path.source=download.
+      delegate_to: localhost
+      when:
+        - default_sc.stdout | length == 0
+        - storage.provisioner == 'local-path'
+        - storage.local_path.source == 'local'
+
+    - name: local-path (local) | ship manifest to master then kubectl apply
+      ansible.builtin.copy:
+        content: "{{ lookup('file', lpp_manifest_local) }}"
+        dest: /tmp/local-path-storage.yaml
+        mode: '0644'
+      when:
+        - default_sc.stdout | length == 0
+        - storage.provisioner == 'local-path'
+        - storage.local_path.source == 'local'
+
+    - name: local-path (local) | apply bundled manifest on master
+      ansible.builtin.command: kubectl apply -f /tmp/local-path-storage.yaml
+      register: lpp_apply_local
+      changed_when: "'created' in lpp_apply_local.stdout or 'configured' in lpp_apply_local.stdout"
+      when:
+        - default_sc.stdout | length == 0
+        - storage.provisioner == 'local-path'
+        - storage.local_path.source == 'local'
+
+    # source=download — fetch manifest from rancher GitHub at run time
+    - name: local-path (download) | apply manifest from GitHub
+      ansible.builtin.command: >
+        kubectl apply -f
+        {{ storage.local_path.release_url | replace('{version}', storage.local_path.version) }}
+      register: lpp_apply_download
+      changed_when: "'created' in lpp_apply_download.stdout or 'configured' in lpp_apply_download.stdout"
+      when:
+        - default_sc.stdout | length == 0
+        - storage.provisioner == 'local-path'
+        - storage.local_path.source == 'download'
+
+    - name: local-path | wait for provisioner deployment to be ready
+      ansible.builtin.command: >
+        kubectl -n local-path-storage rollout status
+        deploy/local-path-provisioner --timeout=120s
+      changed_when: false
+      when:
+        - default_sc.stdout | length == 0
+        - storage.provisioner == 'local-path'
+
+    - name: local-path | mark StorageClass as default
+      ansible.builtin.command: >
+        kubectl patch storageclass {{ storage.class_name }}
+        -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+      register: patch_default
+      changed_when: "'patched' in patch_default.stdout"
+      when:
+        - default_sc.stdout | length == 0
+        - storage.provisioner == 'local-path'
+
+    # ── provisioner=byo ───────────────────────────────────────────────
+    - name: byo | verify named StorageClass exists
+      ansible.builtin.command: kubectl get sc {{ storage.class_name }}
+      register: byo_sc_check
+      changed_when: false
+      failed_when: byo_sc_check.rc != 0
+      when:
+        - default_sc.stdout | length == 0
+        - storage.provisioner == 'byo'
+
+    - name: byo | mark named StorageClass as default (only if no other default)
+      ansible.builtin.command: >
+        kubectl patch storageclass {{ storage.class_name }}
+        -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+      register: byo_patch
+      changed_when: "'patched' in byo_patch.stdout"
+      when:
+        - default_sc.stdout | length == 0
+        - storage.provisioner == 'byo'
+
+    # ── provisioner=vast-csi ──────────────────────────────────────────
+    - name: vast-csi | no-op (csidriver module owns the StorageClass)
+      ansible.builtin.debug:
+        msg: |
+          storage.provisioner=vast-csi — assuming the csidriver ansible module
+          already installed the VAST CSI driver and a default StorageClass.
+          Will fail-verify below if not.
+      when:
+        - default_sc.stdout | length == 0
+        - storage.provisioner == 'vast-csi'
+
+    # ── final verify (regardless of branch) ───────────────────────────
+    - name: Verify a default StorageClass now exists
+      ansible.builtin.shell: |
+        kubectl get sc -o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{"\n"}{end}'
+      register: default_sc_final
+      changed_when: false
+      failed_when: default_sc_final.stdout | length == 0
+
+    - name: Default StorageClass
+      ansible.builtin.debug:
+        msg: "Default StorageClass: {{ default_sc_final.stdout }} (provisioner={{ storage.provisioner }})"

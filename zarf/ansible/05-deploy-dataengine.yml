@@ -1,0 +1,43 @@
+---
+# Deploy the VAST DataEngine Zarf package. Installs KEDA, Knative,
+# vast-operator-controller-manager, vast-telemetries-collector × 5.
+#
+# Idempotent: zarf package deploy is safe to re-run; it diffs and only
+# updates what changed.
+
+- name: Zarf package deploy — VAST DataEngine
+  hosts: zarf_controller
+  gather_facts: no
+
+  tasks:
+    - name: Verify DataEngine zarf package exists on the controller
+      ansible.builtin.stat:
+        path: "{{ zarf_dataengine_package_path }}"
+      register: de_pkg_stat
+
+    - name: Fail — DataEngine zarf package missing
+      ansible.builtin.fail:
+        msg: |
+          DataEngine zarf package not found at: {{ zarf_dataengine_package_path }}
+          Set zarf_dataengine_package_path in group_vars/all.yml to the local path
+          of zarf-package-dataengine-<arch>-<version>.tar.zst (provided by VAST SE).
+      when: not de_pkg_stat.stat.exists
+
+    - name: zarf package deploy (chdir into packages dir)
+      ansible.builtin.command: >
+        zarf package deploy
+        --architecture {{ zarf_arch }}
+        {{ zarf_dataengine_package_path | basename }}
+        --confirm
+        --log-level {{ zarf_log_level }}
+      args:
+        chdir: "{{ zarf_dataengine_package_path | dirname }}"
+      register: zarf_deploy_out
+      # Big package; allow up to 15 min
+      async: 900
+      poll: 15
+      changed_when: "'succeeded' in (zarf_deploy_out.stdout | default(''))"
+
+    - name: Show zarf deploy last 15 lines
+      ansible.builtin.debug:
+        msg: "{{ zarf_deploy_out.stdout_lines[-15:] if zarf_deploy_out.stdout_lines is defined else 'no output' }}"

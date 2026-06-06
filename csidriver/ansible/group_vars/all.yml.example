@@ -1,0 +1,70 @@
+---
+# Copy this file to all.yml and fill in real values.
+# all.yml is gitignored — never commit secrets.
+
+# --- SSH / sudo credentials for every host in inventory.ini ---
+# ansible_user is set per-host in inventory.ini, passwords live here.
+#   - Leave ansible_password empty if you use SSH key auth.
+#   - Leave ansible_become_password empty if your user has passwordless sudo
+#     (true for hosts provisioned by k8s-setup).
+ansible_password: ""
+ansible_become_password: ""
+
+# --- Kubernetes target namespace ---
+csi_namespace: vastcsi
+csi_release_name: csi-driver
+
+# --- VAST CSI Driver Helm chart ---
+vast_csi_helm_repo_name: vastcsi
+vast_csi_helm_repo_url: https://vast-data.github.io/vast-csi
+vast_csi_chart_name: vastcsi
+vast_csi_chart_version: ""   # empty = latest; pin like "2.6.5" for prod
+
+# --- CSI driver provisioner name ---
+# Rendered into values.yaml as csiDriverName.
+csi_driver_name: vastdriver.vastdata.com
+
+# --- VAST cluster / VMS connection ---
+vast_secret_name: vast-csi-secret
+vms_endpoint: vms.example.com
+vms_tenant: ""              # optional; leave empty if not using multi-tenancy
+
+# --- Auth (fill exactly ONE block) ---
+# Playbook 03 branches on what's set:
+#   - if vms_token is non-empty → token branch
+#   - else                       → user/pass branch (must have both)
+vms_token: ""
+vms_username: ""
+vms_password: ""
+
+# --- SSL ---
+# Renders into values.yaml as verifySsl. Set to true ONLY if BOTH:
+#   1. The VAST cluster has a CA-signed cert installed (VAST UI → Security), AND
+#   2. The CSI driver container can find a CA bundle on its own filesystem
+#      (some driver images can't — symptom: "Could not find a suitable TLS CA
+#      certificate bundle, invalid path: /etc/ssl/certs/ca-certificates.crt").
+# For strict TLS with self-signed certs, set false here and use sslCertsSecretName
+# (chart option) to mount a cert into the driver pod.
+verify_ssl: false
+
+# --- Snapshot CRDs ---
+install_snapshot_crds: true
+snapshot_crds_version: v7.0.1
+
+# --- Storage classes ---
+# Each entry produces one Kubernetes StorageClass. Add / remove freely.
+# Specify VIP pool with vipPool (by name) OR vipPoolFQDN (DNS) — not both.
+# secretName / secretNamespace are global (defined above), not per-class.
+storage_classes:
+  georgia-sc1:
+    vipPoolFQDN: georgia.selab-var203.selab.vastdata.com
+    vipPoolFQDNRandomPrefix: true
+    storagePath: /georgia-storage
+    viewPolicy: georgia-policy
+    deletionPolicy: Delete
+
+  georgia-sc2:
+    vipPool: georgia-vipool
+    storagePath: /georgia-nfs
+    viewPolicy: georgia-policy
+    deletionPolicy: Delete

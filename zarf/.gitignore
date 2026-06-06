@@ -1,0 +1,13 @@
+# Secrets — never commit
+ansible/group_vars/all.yml
+
+# Zarf packages — large binary blobs (.tar.zst), keep locally
+packages/
+
+# Ansible noise
+*.retry
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo

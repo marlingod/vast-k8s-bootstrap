@@ -1,0 +1,72 @@
+---
+# Smoke test — opt-in (NOT in site.yml). Verifies the post-deploy state:
+#   - default StorageClass present
+#   - zarf namespace exists
+#   - All vast_namespaces present + labeled
+#   - vast-dataengine namespace has the operator + telemetry pods Running
+#   - 3 VAST CRDs (vasttenants, vastpipelines, vastkafkabrokers) registered
+#
+# Usage:
+#   ansible-playbook -i inventory.ini 06-verify.yml
+
+- name: Verify DataEngine zarf deploy
+  hosts: zarf_controller
+  gather_facts: no
+
+  tasks:
+    - name: Default StorageClass exists
+      ansible.builtin.shell: |
+        kubectl get sc -o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{"\n"}{end}'
+      register: default_sc
+      changed_when: false
+      failed_when: default_sc.stdout | length == 0
+
+    - name: zarf namespace exists
+      ansible.builtin.command: kubectl get ns zarf
+      changed_when: false
+
+    - name: VAST namespaces all present
+      ansible.builtin.command: kubectl get ns {{ vast_namespaces | join(' ') }}
+      changed_when: false
+
+    - name: VAST namespaces all carry zarf.dev/vast=mutate label
+      ansible.builtin.shell: |
+        set -e
+        for ns in {{ vast_namespaces | join(' ') }}; do
+          got=$(kubectl get ns "$ns" -o jsonpath='{.metadata.labels.zarf\.dev/vast}')
+          [ "$got" = "mutate" ] || { echo "ns=$ns label=$got (expected mutate)"; exit 1; }
+        done
+        echo "all namespaces labeled correctly"
+      register: ns_labels
+      changed_when: false
+
+    - name: vast-dataengine pods Running
+      ansible.builtin.shell: |
+        # Expect at minimum: vast-operator-controller-manager + telemetries collectors
+        not_running=$(kubectl -n vast-dataengine get pods --no-headers 2>/dev/null \
+                       | awk '$3 != "Running" && $3 != "Completed" {print}')
+        if [ -n "$not_running" ]; then
+          echo "non-Running pods in vast-dataengine:"
+          echo "$not_running"
+          exit 1
+        fi
+        kubectl -n vast-dataengine get pods --no-headers | wc -l
+      register: pods_status
+      changed_when: false
+
+    - name: VAST CRDs registered
+      ansible.builtin.shell: |
+        for crd in vasttenants.vast.vastdata.com vastpipelines.vast.vastdata.com vastkafkabrokers.vast.vastdata.com; do
+          kubectl get crd "$crd" >/dev/null || { echo "missing CRD: $crd"; exit 1; }
+        done
+        echo "all 3 CRDs present"
+      register: crd_check
+      changed_when: false
+
+    - name: Smoke test summary
+      ansible.builtin.debug:
+        msg:
+          - "Default StorageClass: {{ default_sc.stdout }}"
+          - "Namespaces labeled: {{ ns_labels.stdout }}"
+          - "vast-dataengine pods Running: {{ pods_status.stdout }}"
+          - "CRDs: {{ crd_check.stdout }}"
