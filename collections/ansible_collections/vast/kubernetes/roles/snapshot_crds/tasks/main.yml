@@ -11,7 +11,6 @@
   kubernetes.core.k8s:
     state: present
     src: "{{ item }}"
-    kubeconfig: "{{ csi_kubeconfig }}"
   loop:
     - "{{ snapshot_base }}/client/config/crd/snapshot.storage.k8s.io_volumesnapshotclasses.yaml"
     - "{{ snapshot_base }}/client/config/crd/snapshot.storage.k8s.io_volumesnapshotcontents.yaml"

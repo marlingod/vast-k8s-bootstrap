@@ -8,7 +8,10 @@
 - name: Users | provision K8s users
   hosts: masters
   become: true
-  gather_facts: true
+  gather_facts: false
   tags: [users]
+  module_defaults:
+    group/k8s:
+      kubeconfig: "{{ k8s_users_kubeconfig | default('/etc/kubernetes/admin.conf') }}"
   roles:
     - vast.kubernetes.k8s_users

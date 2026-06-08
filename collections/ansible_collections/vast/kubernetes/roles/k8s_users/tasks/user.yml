@@ -1,14 +1,15 @@
 ---
+
 - name: "Validate auth mode for {{ user.name }}"
   ansible.builtin.fail:
     msg: "user.auth must be 'token' or 'cert', got '{{ user.auth | default('') }}'"
   when: user.auth not in ['token', 'cert']
 
 # ── token branch ────────────────────────────────────────────────────────
+
 - name: "Create ServiceAccount for {{ user.name }}"
   kubernetes.core.k8s:
     state: present
-    kubeconfig: "{{ k8s_users_kubeconfig }}"
     definition:
       apiVersion: v1
       kind: ServiceAccount
@@ -20,7 +21,6 @@
 - name: "Create SA token Secret for {{ user.name }}"
   kubernetes.core.k8s:
     state: present
-    kubeconfig: "{{ k8s_users_kubeconfig }}"
     definition:
       apiVersion: v1
       kind: Secret
@@ -35,7 +35,6 @@
 - name: "Create ClusterRoleBinding (token) for {{ user.name }}"
   kubernetes.core.k8s:
     state: present
-    kubeconfig: "{{ k8s_users_kubeconfig }}"
     definition:
       apiVersion: rbac.authorization.k8s.io/v1
       kind: ClusterRoleBinding
@@ -56,7 +55,6 @@
     kind: Secret
     name: "{{ user.name }}-token"
     namespace: "{{ user.namespace | default('kube-system') }}"
-    kubeconfig: "{{ k8s_users_kubeconfig }}"
   register: sa_secret
   retries: 5
   delay: 2
@@ -67,6 +65,7 @@
   no_log: true
 
 # ── cert branch ─────────────────────────────────────────────────────────
+
 - name: "Generate private key (cert) for {{ user.name }}"
   community.crypto.openssl_privatekey:
     path: "/tmp/{{ user.name }}.key"
@@ -93,13 +92,11 @@
     state: absent
     kind: CertificateSigningRequest
     name: "{{ user.name }}-csr"
-    kubeconfig: "{{ k8s_users_kubeconfig }}"
   when: user.auth == 'cert'
 
 - name: "Submit K8s CSR for {{ user.name }}"
   kubernetes.core.k8s:
     state: present
-    kubeconfig: "{{ k8s_users_kubeconfig }}"
     definition:
       apiVersion: certificates.k8s.io/v1
       kind: CertificateSigningRequest
@@ -123,7 +120,6 @@
   kubernetes.core.k8s_info:
     kind: CertificateSigningRequest
     name: "{{ user.name }}-csr"
-    kubeconfig: "{{ k8s_users_kubeconfig }}"
   register: csr_signed
   retries: 10
   delay: 2
@@ -135,7 +131,6 @@
 - name: "Create ClusterRoleBinding (cert) for {{ user.name }}"
   kubernetes.core.k8s:
     state: present
-    kubeconfig: "{{ k8s_users_kubeconfig }}"
     definition:
       apiVersion: rbac.authorization.k8s.io/v1
       kind: ClusterRoleBinding
@@ -152,6 +147,7 @@
   when: user.auth == 'cert'
 
 # ── emit kubeconfig (both branches) ─────────────────────────────────────
+
 - name: "Read cluster CA from admin.conf for {{ user.name }}"
   ansible.builtin.shell: |
     set -o pipefail

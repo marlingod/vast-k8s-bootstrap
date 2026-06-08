@@ -5,7 +5,6 @@
 - name: Create CSI namespace
   kubernetes.core.k8s:
     state: present
-    kubeconfig: "{{ csi_kubeconfig }}"
     definition:
       apiVersion: v1
       kind: Namespace
@@ -45,7 +44,6 @@
 - name: Create / update VMS secret
   kubernetes.core.k8s:
     state: present
-    kubeconfig: "{{ csi_kubeconfig }}"
     definition:
       apiVersion: v1
       kind: Secret
@@ -74,7 +72,6 @@
     chart_version: "{{ vast_csi_chart_version | default(omit, true) }}"
     release_namespace: "{{ csi_namespace }}"
     create_namespace: true
-    kubeconfig: "{{ csi_kubeconfig }}"
     values_files:
       - /tmp/vast-csi-values.rendered.yaml
     wait: true

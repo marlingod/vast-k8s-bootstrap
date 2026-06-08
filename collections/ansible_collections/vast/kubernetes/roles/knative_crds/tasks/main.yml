@@ -12,7 +12,6 @@
   kubernetes.core.k8s_info:
     kind: CustomResourceDefinition
     name: "{{ item }}"
-    kubeconfig: "{{ knative_kubeconfig }}"
   loop: "{{ required_crds }}"
   register: crd_check
 
@@ -29,7 +28,6 @@
   kubernetes.core.k8s:
     state: present
     src: "{{ role_path }}/files/{{ knative_crds.manifest_path }}"
-    kubeconfig: "{{ knative_kubeconfig }}"
   when:
     - crds_missing
     - knative_crds.source == 'local'
@@ -62,7 +60,6 @@
   kubernetes.core.k8s:
     state: present
     src: /tmp/knative-crds.yaml
-    kubeconfig: "{{ knative_kubeconfig }}"
   when:
     - crds_missing
     - knative_crds.source == 'download'
@@ -70,10 +67,10 @@
 # Helm refuses to "import" pre-existing CRDs unless they carry the Helm
 # ownership label + release annotations. Stamp them so the chart deploy
 # succeeds. Safe to re-run.
+
 - name: Adopt CRDs (Helm label)
   kubernetes.core.k8s:
     state: patched
-    kubeconfig: "{{ knative_kubeconfig }}"
     kind: CustomResourceDefinition
     name: "{{ item }}"
     definition:
@@ -85,7 +82,6 @@
 - name: Adopt CRDs (Helm release annotations)
   kubernetes.core.k8s:
     state: patched
-    kubeconfig: "{{ knative_kubeconfig }}"
     kind: CustomResourceDefinition
     name: "{{ item }}"
     definition:

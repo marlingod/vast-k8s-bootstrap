@@ -7,7 +7,8 @@
 - name: Zarf | tune inotify on every K8s node
   hosts: k8s_nodes
   become: true
-  gather_facts: true
+  gather_facts: false
+  strategy: free                              # nodes are independent
   tags: [zarf, zarf_inotify]
   roles:
     - vast.kubernetes.inotify_limits
@@ -15,8 +16,11 @@
 - name: Zarf | install CLI, fetch packages, deploy DataEngine
   hosts: zarf_controller
   become: true
-  gather_facts: true
+  gather_facts: false
   tags: [zarf]
+  module_defaults:
+    group/k8s:
+      kubeconfig: "{{ sc_kubeconfig | default('/etc/kubernetes/admin.conf') }}"
   roles:
     - vast.kubernetes.zarf_install
     - vast.kubernetes.zarf_packages

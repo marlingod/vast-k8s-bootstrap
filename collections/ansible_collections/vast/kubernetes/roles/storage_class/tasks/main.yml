@@ -14,7 +14,6 @@
 - name: Detect existing default StorageClass
   kubernetes.core.k8s_info:
     kind: StorageClass
-    kubeconfig: "{{ sc_kubeconfig }}"
   register: all_sc
 
 - name: Compute default StorageClass name (if any)
@@ -42,11 +41,11 @@
     - storage.provisioner == 'none'
 
 # ── provisioner=local-path ───────────────────────────────────────────────
+
 - name: Apply local-path provisioner manifest (source=local)
   kubernetes.core.k8s:
     state: present
     src: "{{ role_path }}/files/{{ storage.local_path.manifest_path }}"
-    kubeconfig: "{{ sc_kubeconfig }}"
   when:
     - default_sc_name | length == 0
     - storage.provisioner == 'local-path'
@@ -56,7 +55,6 @@
   kubernetes.core.k8s:
     state: present
     src: "{{ storage.local_path.release_url | replace('{version}', storage.local_path.version) }}"
-    kubeconfig: "{{ sc_kubeconfig }}"
   when:
     - default_sc_name | length == 0
     - storage.provisioner == 'local-path'
@@ -72,7 +70,6 @@
       type: Available
       status: "True"
     wait_timeout: 120
-    kubeconfig: "{{ sc_kubeconfig }}"
   when:
     - default_sc_name | length == 0
     - storage.provisioner == 'local-path'
@@ -80,7 +77,6 @@
 - name: Mark local-path StorageClass as default
   kubernetes.core.k8s:
     state: patched
-    kubeconfig: "{{ sc_kubeconfig }}"
     kind: StorageClass
     name: "{{ storage.class_name }}"
     definition:
@@ -92,11 +88,11 @@
     - storage.provisioner == 'local-path'
 
 # ── provisioner=byo ───────────────────────────────────────────────────────
+
 - name: Verify named StorageClass exists (provisioner=byo)
   kubernetes.core.k8s_info:
     kind: StorageClass
     name: "{{ storage.class_name }}"
-    kubeconfig: "{{ sc_kubeconfig }}"
   register: byo_sc
   failed_when: byo_sc.resources | length == 0
   when:
@@ -106,7 +102,6 @@
 - name: Mark named StorageClass as default (provisioner=byo)
   kubernetes.core.k8s:
     state: patched
-    kubeconfig: "{{ sc_kubeconfig }}"
     kind: StorageClass
     name: "{{ storage.class_name }}"
     definition:
@@ -118,6 +113,7 @@
     - storage.provisioner == 'byo'
 
 # ── provisioner=vast-csi ─────────────────────────────────────────────────
+
 - name: No-op — csidriver module owns StorageClass (provisioner=vast-csi)
   ansible.builtin.debug:
     msg: "provisioner=vast-csi — relying on csi.yml to have installed a default class."
@@ -126,10 +122,10 @@
     - storage.provisioner == 'vast-csi'
 
 # ── final verify ─────────────────────────────────────────────────────────
+
 - name: Re-check default StorageClass
   kubernetes.core.k8s_info:
     kind: StorageClass
-    kubeconfig: "{{ sc_kubeconfig }}"
   register: all_sc_final
 
 - name: Assert a default StorageClass is now present

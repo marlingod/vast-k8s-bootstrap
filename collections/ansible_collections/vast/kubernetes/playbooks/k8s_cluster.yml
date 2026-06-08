@@ -16,10 +16,10 @@
 - name: K8s | install kubeadm prerequisites
   hosts: k8s
   become: true
-  gather_facts: true
+  gather_facts: false                          # facts cached from play #1
   tags: [k8s, k8s_prereqs]
   roles:
-    - vast.kubernetes.common_prereqs
+    # common_prereqs intentionally omitted — already ran on `all` (superset)
     - vast.kubernetes.containerd
     - vast.kubernetes.kubeadm_install
     - vast.kubernetes.nfs_client
@@ -28,15 +28,18 @@
 - name: K8s | initialize master(s)
   hosts: masters
   become: true
-  gather_facts: true
+  gather_facts: false                          # facts cached
   tags: [k8s, k8s_master]
+  module_defaults:
+    group/k8s:
+      kubeconfig: /etc/kubernetes/admin.conf
   roles:
     - vast.kubernetes.kubeadm_master
 
 - name: K8s | join worker(s)
   hosts: workers
   become: true
-  gather_facts: true
+  gather_facts: false                          # no facts referenced
   tags: [k8s, k8s_worker]
   roles:
     - vast.kubernetes.kubeadm_worker

@@ -5,11 +5,11 @@
 # `changed_when:` so re-runs are idempotent.
 
 # ── 1. zarf init ─────────────────────────────────────────────────────────
+
 - name: Check if zarf namespace exists
   kubernetes.core.k8s_info:
     kind: Namespace
     name: zarf
-    kubeconfig: "{{ de_kubeconfig }}"
   register: zarf_ns
 
 - name: Pre-5.4.1-sp2 file rename quirk
@@ -44,7 +44,6 @@
 - name: Detect existing default StorageClass
   kubernetes.core.k8s_info:
     kind: StorageClass
-    kubeconfig: "{{ de_kubeconfig }}"
   register: all_sc
   when: zarf_ns.resources | length == 0
 
@@ -79,10 +78,10 @@
   changed_when: zarf_init_out.rc == 0
 
 # ── 2. namespaces + labels + secret sync ─────────────────────────────────
+
 - name: Create VAST namespaces
   kubernetes.core.k8s:
     state: present
-    kubeconfig: "{{ de_kubeconfig }}"
     definition:
       apiVersion: v1
       kind: Namespace
@@ -96,7 +95,6 @@
   kubernetes.core.k8s_json_patch:
     kind: Namespace
     name: "{{ item }}"
-    kubeconfig: "{{ de_kubeconfig }}"
     patch:
       - op: remove
         path: /metadata/labels/zarf.dev~1agent
@@ -104,6 +102,7 @@
   failed_when: false  # label may not exist
 
 # ── 3. zarf package deploy ───────────────────────────────────────────────
+
 - name: Verify DataEngine package present
   ansible.builtin.stat:
     path: "{{ zarf_dataengine_package_path }}"

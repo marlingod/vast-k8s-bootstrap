@@ -13,8 +13,11 @@
 - name: CSI | install Helm + snapshot CRDs + VAST CSI driver
   hosts: csi_controller
   become: true
-  gather_facts: true
+  gather_facts: false
   tags: [csi]
+  module_defaults:
+    group/k8s:                                # applies to every kubernetes.core module
+      kubeconfig: "{{ csi_kubeconfig | default('/etc/kubernetes/admin.conf') }}"
   roles:
     - vast.kubernetes.helm_install
     - vast.kubernetes.snapshot_crds
