@@ -50,12 +50,10 @@
 - name: Set _has_default_sc
   ansible.builtin.set_fact:
     _has_default_sc: >-
-      {{
-        (all_sc.resources
-         | selectattr('metadata.annotations', 'defined')
-         | selectattr('metadata.annotations["storageclass.kubernetes.io/is-default-class"]', 'equalto', 'true')
-         | list | length) > 0
-      }}
+      {{ (all_sc.resources | community.general.json_query(_default_sc_query) | length) > 0 }}
+  vars:
+    _default_sc_query: >-
+      [?metadata.annotations."storageclass.kubernetes.io/is-default-class"=='true'].metadata.name
   when: zarf_ns.resources | length == 0
 
 - name: Run zarf init

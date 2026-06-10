@@ -1,0 +1,51 @@
+---
+# Install the Python "kubernetes" client lib on hosts that run kubernetes.core
+# modules. Without it, every kubernetes.core.k8s* task fails with:
+#   Failed to import the required Python library (kubernetes)
+#
+# Idempotent: ansible.builtin.pip is a no-op if already installed.
+
+# NOTE on check_mode: false
+# Every kubernetes.core.* task imports the `kubernetes` Python lib at task-load
+# time. In --check runs, if we don't really install the lib, every subsequent
+# kubernetes.core task fails with ImportError. So we bootstrap-install the lib
+# unconditionally — this is the only step in the whole collection that mutates
+# under --check, and only on first run (idempotent thereafter).
+
+- name: Install python3-pip (Debian) [bootstrap, runs in check mode]
+  ansible.builtin.apt:
+    name: python3-pip
+    state: present
+  when: ansible_os_family == "Debian"
+  check_mode: false
+
+- name: Install python3-pip (RHEL) [bootstrap, runs in check mode]
+  ansible.builtin.dnf:
+    name: python3-pip
+    state: present
+  when: ansible_os_family == "RedHat"
+  check_mode: false
+
+- name: Ensure system PyYAML is present (Debian)
+  ansible.builtin.apt:
+    name: python3-yaml
+    state: present
+  when: ansible_os_family == "Debian"
+  check_mode: false
+
+- name: Ensure system PyYAML is present (RHEL)
+  ansible.builtin.dnf:
+    name: python3-pyyaml
+    state: present
+  when: ansible_os_family == "RedHat"
+  check_mode: false
+
+# Don't include pyyaml — Debian/RHEL system pyyaml satisfies the kubernetes lib
+# and is RECORD-less so pip can't upgrade-uninstall it.
+- name: Install Python kubernetes client library [bootstrap, runs in check mode]
+  ansible.builtin.pip:
+    name: "kubernetes{{ python_k8s_client_version_spec }}"
+    state: present
+    executable: pip3
+    extra_args: "{{ python_k8s_client_pip_extra_args | default(omit) }}"
+  check_mode: false

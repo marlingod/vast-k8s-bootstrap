@@ -16,12 +16,13 @@
 - name: Zarf | install CLI, fetch packages, deploy DataEngine
   hosts: zarf_controller
   become: true
-  gather_facts: false
+  gather_facts: true                          # python_k8s_client needs os_family
   tags: [zarf]
   module_defaults:
     group/k8s:
       kubeconfig: "{{ sc_kubeconfig | default('/etc/kubernetes/admin.conf') }}"
   roles:
+    - vast.kubernetes.python_k8s_client
     - vast.kubernetes.zarf_install
     - vast.kubernetes.zarf_packages
     - vast.kubernetes.storage_class

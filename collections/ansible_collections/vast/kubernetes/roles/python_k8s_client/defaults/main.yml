@@ -1,0 +1,10 @@
+---
+python_k8s_client_version_spec: ">=29.0.0"
+
+# Required on Debian 12+ / Ubuntu 24.04+ where system Python is PEP 668 locked.
+# Pip ignores the flag on systems that don't need it, so this is safe as a default.
+# Override to "" in inventory if you'd rather use a virtualenv.
+# --break-system-packages    → bypass PEP 668 on Ubuntu 24+/Debian 12+
+# --ignore-installed pyyaml  → don't try to uninstall Debian-managed PyYAML
+#                              (kubernetes>=36 requires pyyaml>=6.0.3, system is 6.0.1)
+python_k8s_client_pip_extra_args: "--break-system-packages --ignore-installed pyyaml"

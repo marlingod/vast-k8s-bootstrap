@@ -2,6 +2,16 @@
 # Install kubeadm + kubelet + kubectl from pkgs.k8s.io. Holds packages so an
 # apt upgrade doesn't yank them out from under a running cluster.
 
+- name: Assert kubernetes_version is >= 1.33
+  ansible.builtin.assert:
+    that:
+      - kubernetes_version is version('1.33', '>=')
+    fail_msg: >-
+      kubernetes_version={{ kubernetes_version }} is below the supported floor (1.33).
+      Bump kubernetes_version in inventory/group_vars/all/vars.yml.
+    success_msg: "kubernetes_version={{ kubernetes_version }} (>=1.33) ✓"
+  run_once: true                              # one host is enough to validate
+
 - name: Download Kubernetes GPG key (Debian)
   ansible.builtin.get_url:
     url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/Release.key"

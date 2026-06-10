@@ -59,11 +59,18 @@
     src: values.yaml.j2
     dest: /tmp/vast-csi-values.rendered.yaml
     mode: '0600'
+  # Bootstrap: subsequent `helm upgrade --install` reads this file even in
+  # check mode (helm always reads -f values). Writing to /tmp is benign.
+  check_mode: false
 
 - name: Add VAST CSI Helm repo
   kubernetes.core.helm_repository:
     name: "{{ vast_csi_helm_repo_name }}"
     repo_url: "{{ vast_csi_helm_repo_url }}"
+  # Bootstrap: the next task does `helm show chart <repo>/<name>` even in
+  # check mode, which fails if the repo wasn't really registered first.
+  # Adding a Helm repo is metadata-only (no cluster mutation).
+  check_mode: false
 
 - name: Install / upgrade VAST CSI Driver
   kubernetes.core.helm:

@@ -18,13 +18,16 @@
 
 - name: Compute default StorageClass name (if any)
   ansible.builtin.set_fact:
+    # JMESPath quoting handles dotted/slashed annotation keys correctly.
     default_sc_name: >-
       {{
         (all_sc.resources
-         | selectattr('metadata.annotations', 'defined')
-         | selectattr('metadata.annotations["storageclass.kubernetes.io/is-default-class"]', 'equalto', 'true')
-         | map(attribute='metadata.name') | list | first) | default('')
+         | community.general.json_query(_default_sc_query)
+         | first) | default('')
       }}
+  vars:
+    _default_sc_query: >-
+      [?metadata.annotations."storageclass.kubernetes.io/is-default-class"=='true'].metadata.name
 
 - name: Skip — default StorageClass already exists
   ansible.builtin.debug:
@@ -131,9 +134,8 @@
 - name: Assert a default StorageClass is now present
   ansible.builtin.assert:
     that:
-      - >
-        (all_sc_final.resources
-         | selectattr('metadata.annotations', 'defined')
-         | selectattr('metadata.annotations["storageclass.kubernetes.io/is-default-class"]', 'equalto', 'true')
-         | list | length) > 0
+      - (all_sc_final.resources | community.general.json_query(_default_sc_query) | length) > 0
     fail_msg: "No default StorageClass present after storage_class role ran."
+  vars:
+    _default_sc_query: >-
+      [?metadata.annotations."storageclass.kubernetes.io/is-default-class"=='true'].metadata.name

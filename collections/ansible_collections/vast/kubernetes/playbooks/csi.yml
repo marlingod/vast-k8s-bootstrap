@@ -13,12 +13,13 @@
 - name: CSI | install Helm + snapshot CRDs + VAST CSI driver
   hosts: csi_controller
   become: true
-  gather_facts: false
+  gather_facts: true                          # python_k8s_client needs os_family
   tags: [csi]
   module_defaults:
     group/k8s:                                # applies to every kubernetes.core module
       kubeconfig: "{{ csi_kubeconfig | default('/etc/kubernetes/admin.conf') }}"
   roles:
+    - vast.kubernetes.python_k8s_client
     - vast.kubernetes.helm_install
     - vast.kubernetes.snapshot_crds
     - vast.kubernetes.vast_csi
