@@ -2,10 +2,12 @@
 *.retry
 .cache/
 
-# Vault password file + decrypted vault — NEVER commit
+# Vault password file + decrypted vault + any backup of it — NEVER commit
 *.vault_pass
 .vault_pass*
 inventory/group_vars/all/vault.yml
+inventory/group_vars/all/vault.yml.*
+!inventory/group_vars/all/vault.yml.example
 
 # Per-host vars that may contain cluster IPs / endpoints
 inventory/host_vars/
