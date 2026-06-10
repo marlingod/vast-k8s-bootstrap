@@ -1,18 +1,37 @@
-# Ansible
+# Ansible runtime / cache
 *.retry
 .cache/
 
-# Secrets / vault password
+# Vault password file + decrypted vault — NEVER commit
 *.vault_pass
 .vault_pass*
+inventory/group_vars/all/vault.yml
 
-# Local manifest cache
+# Per-host vars that may contain cluster IPs / endpoints
+inventory/host_vars/
+
+# Galaxy-downloaded collections (recreated by `make install`)
+# Keep only our own collection (vast/kubernetes/), drop everyone else.
+collections/ansible_collections/community/
+collections/ansible_collections/kubernetes/
+collections/ansible_collections/ansible/
+collections/ansible_collections/*.info/
+
+# Locally-fetched join token (contains a bootstrap secret)
 k8s-join-command.sh
+ansible/k8s-join-command.sh
 
-# Editor
+# Zarf packages (SE-supplied, often hundreds of MB)
+packages/
+*.tar.zst
+*.tar.gz
+
+# Editor / OS noise
 .DS_Store
 .idea/
 .vscode/
+*.swp
+*~
 
 # Python
 __pycache__/
@@ -20,5 +39,6 @@ __pycache__/
 .venv/
 venv/
 
-# Zarf packages (large, SE-supplied)
-packages/
+# Test artifacts
+/tmp_test_output/
+*.log
