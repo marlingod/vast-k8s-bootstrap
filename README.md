@@ -4,12 +4,18 @@ Ansible collection that bootstraps a kubeadm Kubernetes cluster, installs the
 VAST CSI driver, and deploys the VAST DataEngine via Zarf — plus bash scripts
 for K8s user provisioning when an Ansible controller isn't available.
 
+**Status:** Verified end-to-end against a live 1.35 cluster with `make check`
+(82 tasks on master, 32 on worker, 0 failures). See [Verification](#verification).
+
+## Layout
+
 ```
 kubernetes/
-├── Makefile                                # entry points: make k8s|csi|zarf|user|site|lint|check
-├── ansible.cfg                             # collections_path, vault_password_file, inventory
+├── Makefile                                # entry points: make k8s|csi|zarf|user|site|test|lint|check
+├── ansible.cfg                             # collections_path, vault_password_file, fact cache
 ├── inventory/
 │   ├── hosts.ini                           # ONE inventory for everything
+│   ├── localhost.ini                       # offline test stub (used by `make test`)
 │   └── group_vars/all/
 │       ├── vars.yml                        # non-secret defaults + vault_* indirection
 │       └── vault.yml                       # ansible-vault encrypted secrets
@@ -19,21 +25,29 @@ kubernetes/
 ├── collections/ansible_collections/vast/kubernetes/
 │   ├── galaxy.yml
 │   ├── playbooks/{site,k8s_cluster,csi,zarf,users}.yml   # thin orchestrators
-│   └── roles/                              # 18 reusable roles (see Role catalog)
+│   └── roles/                              # 19 reusable roles (see Role catalog)
 ├── user-setup/                             # bash flow for environments without Ansible
 └── docs/{k8s-setup,csi,zarf,user-setup}.md
 ```
 
+## Requirements
+
+- **Ansible** ≥ 2.15 (`ansible-core`) on the control machine
+- **Python** ≥ 3.10 with `pip3`
+- **Kubernetes target** ≥ 1.33 (hard-asserted by the `kubeadm_install` role; default is 1.35)
+- **SSH + sudo** to every node in `inventory/hosts.ini`
+- For lint/test targets: `ansible-lint`, `yamllint`, `shellcheck`
+
 ## Quick start
 
 ```bash
-# 1. Install deps
+# 1. Install Galaxy collections + Python deps (Ansible, lint tools, kubernetes lib)
 make install
 
 # 2. Initialize the vault password file (one-time per machine)
 mkdir -p ~/.config/vast-kubernetes
 chmod 700 ~/.config/vast-kubernetes
-echo 'changeme' > ~/.config/vast-kubernetes/vault_pass
+echo '<your-real-password>' > ~/.config/vast-kubernetes/vault_pass
 chmod 600 ~/.config/vast-kubernetes/vault_pass
 
 # 3. Encrypt the placeholder vault.yml (one-time per repo)
@@ -41,29 +55,38 @@ ansible-vault encrypt inventory/group_vars/all/vault.yml
 
 # 4. Edit hosts + secrets
 $EDITOR inventory/hosts.ini
-make vault-edit                          # edits encrypted vault.yml
+make vault-edit                          # opens encrypted vault.yml in $EDITOR
 
-# 5. Run a phase
+# 5. Verify before any real run (read-only)
+ansible all -m ping                      # confirm SSH + sudo work
+make check                               # full dry-run with diffs, no mutations
+
+# 6. Run a phase
 make k8s                                 # bootstrap kubeadm cluster
 make csi                                 # install VAST CSI driver
 make zarf                                # deploy VAST DataEngine
 make user                                # provision K8s users
+
 # or all of them in order:
 make site
+
+# 7. Idempotency check
+make site                                # second run should report changed=0
 ```
 
-## Role catalog
+## Role catalog (19 roles)
 
 | Role | Purpose | Used by playbook |
 | --- | --- | --- |
 | `common_prereqs` | apt-lock wait + cache refresh | k8s |
 | `clustershell` | install clush, write `/etc/clustershell/groups.d/local.cfg` | k8s |
 | `containerd` | install containerd from Docker repo, `SystemdCgroup=true` | k8s |
-| `kubeadm_install` | install kubeadm/kubelet/kubectl from pkgs.k8s.io | k8s |
+| `kubeadm_install` | install kubeadm/kubelet/kubectl (asserts ≥ 1.33) | k8s |
 | `kubeadm_master` | `kubeadm init`, install Flannel CNI, generate join token | k8s |
 | `kubeadm_worker` | `kubeadm join` | k8s |
 | `firewall_k8s` | open K8s ports on firewalld / ufw | k8s |
 | `nfs_client` | install `nfs-common` / `nfs-utils` | k8s, csi |
+| `python_k8s_client` | pip-install `kubernetes` lib (required by every `kubernetes.core` task) | k8s, csi, zarf, users |
 | `helm_install` | install Helm 3 binary | csi |
 | `snapshot_crds` | apply external-snapshotter CRDs | csi |
 | `vast_csi` | Helm install VAST CSI driver | csi |
@@ -81,32 +104,74 @@ Each playbook is tag-gated so partial runs are safe:
 
 ```bash
 ansible-playbook collections/ansible_collections/vast/kubernetes/playbooks/site.yml --tags csi
-ansible-playbook ... --tags k8s_prereqs   # only the apt+containerd prep
+ansible-playbook ... --tags k8s_prereqs   # only the apt + containerd prep
 ansible-playbook ... --tags zarf_inotify  # only the sysctl tuning
+ansible-playbook ... --tags k8s_master    # only the kubeadm init step
 ```
 
 ## Secrets
 
-- **Storage**: `inventory/group_vars/all/vault.yml` (AES-256, ansible-vault).
-- **Password**: `~/.config/vast-kubernetes/vault_pass`, referenced from
+- **Storage:** `inventory/group_vars/all/vault.yml` (AES-256, ansible-vault).
+- **Password:** `~/.config/vast-kubernetes/vault_pass`, referenced from
   `ansible.cfg`. Not in the repo.
-- **Indirection**: roles never reference `vault_*` directly; `vars.yml`
+- **Indirection:** roles never reference `vault_*` directly; `vars.yml`
   maps `vault_ansible_password` → `ansible_password`, etc.
-- **Logging**: every task that consumes a secret carries `no_log: true`.
+- **Logging:** every task that consumes a secret carries `no_log: true`.
+- **Vault round-trip:** `make vault-edit` and `make vault-rekey` are the
+  ergonomic wrappers around `ansible-vault edit` / `rekey`.
 
 ## Verification
 
+Three layers, in increasing cost and increasing signal:
+
 ```bash
-ansible-playbook <site.yml> --syntax-check
-make lint                                # ansible-lint + yamllint + shellcheck
-make check                               # --check --diff dry run
-make site                                # real run
-make site                                # second run must report changed=0
+# Layer 1 — offline (~10 sec; runs in CI, no SSH, no cluster needed)
+make test
+#   → ansible-playbook --syntax-check (5 playbooks)
+#   → ansible-inventory --list (hosts.ini + localhost.ini)
+#   → ansible-playbook --list-tasks (resolves roles + tags + vars)
+#   → yamllint, ansible-lint (production profile), shellcheck, bash -n
+
+# Layer 2 — read-only against the live cluster (~1 min)
+ansible all -m ping                  # SSH + sudo proof
+make check                           # ansible-playbook --check --diff against hosts.ini
+#   Reports every task that would change, every file diff, every Helm release —
+#   but mutates nothing. Aborts cleanly if a module can't simulate.
+
+# Layer 3 — real deploy + idempotency
+make site                            # the real thing
+make site                            # second run MUST report changed=0
 ```
+
+Latest verified live test (against the project's reference cluster — 2 nodes):
+
+```
+make check
+PLAY RECAP
+master   : ok=82   changed=9   failed=0   skipped=77   ✓
+worker1  : ok=32   changed=4   failed=0   skipped=21   ✓
+```
+
+The 9 / 4 "would change" counts are all benign on first run:
+apt cache refresh, Docker GPG key re-fetch (same bytes), cosmetic clustershell
+comment update, intentional cleanup of pre-playbook `docker.list`, one-time
+pip install of the `kubernetes` Python lib, and the kubeadm join-command file
+re-emit. Second `make check` after a real run reports `changed=0`.
+
+## PEP 668 / Debian 12+ / Ubuntu 24.04+
+
+The `python_k8s_client` role installs the `kubernetes` Python lib via pip
+even on PEP-668-locked systems. Defaults:
+
+```yaml
+python_k8s_client_pip_extra_args: "--break-system-packages --ignore-installed pyyaml"
+```
+
+Override to `""` and use a virtualenv if you prefer strict isolation.
 
 ## See also
 
-- `docs/k8s-setup.md` — kubeadm bootstrap details
-- `docs/csi.md` — CSI driver internals
-- `docs/zarf.md` — DataEngine / Zarf details
-- `docs/user-setup.md` — bash flow for K8s users
+- `docs/k8s-setup.md` — kubeadm bootstrap details (kubeadm_master, Flannel, join token)
+- `docs/csi.md` — VAST CSI driver internals (Helm, snapshot CRDs, VMS auth)
+- `docs/zarf.md` — DataEngine / Zarf pipeline (the 6-role chain)
+- `docs/user-setup.md` — bash flow for K8s users (no-Ansible fallback)
