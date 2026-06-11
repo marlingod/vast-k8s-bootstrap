@@ -8,10 +8,17 @@
     name: "{{ 'nfs-common' if ansible_os_family == 'Debian' else 'nfs-utils' }}"
     state: present
 
-- name: Verify mount.nfs is present
-  # Don't use `command -v` — `command` is a shell builtin, not a binary,
-  # so ansible.builtin.command can't exec it. Stat the canonical path instead.
-  ansible.builtin.stat:
-    path: /sbin/mount.nfs
-  register: mount_nfs_stat
-  failed_when: not mount_nfs_stat.stat.exists
+- name: Verify mount.nfs is on PATH
+  # mount.nfs lives at different paths across distros:
+  #   Ubuntu Noble (24.04): /usr/sbin/mount.nfs
+  #   older Debian/Ubuntu:  /sbin/mount.nfs  (often a symlink to /usr/sbin)
+  #   RHEL/CentOS:          /usr/sbin/mount.nfs
+  # Use the shell module (NOT command — `command` is a shell builtin and
+  # ansible.builtin.command can't exec builtins) so `command -v` finds it
+  # wherever it lives.
+  ansible.builtin.shell: command -v mount.nfs
+  args:
+    executable: /bin/bash
+  register: mount_nfs_check
+  changed_when: false
+  failed_when: mount_nfs_check.rc != 0
