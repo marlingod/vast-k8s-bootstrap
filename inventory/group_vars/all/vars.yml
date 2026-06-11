@@ -85,30 +85,31 @@ zarf_registry_hpa_auto_size: true
 legacy_init_rename: true
 
 zarf_packages:
-  # Pick ONE source mode:
-  #   local             → both .tar.zst already on master under `dir` below
-  #   download          → master fetches `bundle_url` directly (master needs egress)
-  #   operator_download → OPERATOR (this Mac) fetches `bundle_url` from the
-  #                       SE-provided link, then scp's to master.
-  #                       Use when master is air-gapped but you have internet.
-  #   upload            → operator scp's pre-existing file(s) to master
+  # ─── Pick ONE source mode ──────────────────────────────────────────────
+  #   local              [no internet]       both .tar.zst already on master under `dir`
+  #   download           [master internet]   master fetches `bundle_url` directly
+  #   operator_download  [operator internet] this Mac fetches `bundle_url`, scp's to master
+  #                                          → use when master is air-gapped, Mac isn't
+  #   upload             [no internet]       operator scp's pre-existing file(s) to master
   source: upload
 
   # On-master cache for the .tar.zst files (used by every source mode).
   dir: "/home/{{ ansible_user }}/vast-zarf-packages"
 
-  # source=download OR source=operator_download — SE-provided download URL
-  # (e.g. https://files.vastdata.com/vast_dataengine_release_N_pipeline.tar.gz)
+  # ─── source=download / source=operator_download ────────────────────────
+  # SE-provided URL (e.g. https://files.vastdata.com/vast_dataengine_release_N_pipeline.tar.gz)
   bundle_url: ""
 
-  # source=operator_download — where on this Mac to cache the download.
-  # Idempotent: if the bundle is already there, the operator skips the fetch.
+  # ─── source=operator_download only ─────────────────────────────────────
+  # Where on THIS Mac to cache the downloaded bundle. Idempotent: a
+  # second `make zarf` run skips the fetch if the bundle is already here.
   operator_download_dir: "{{ lookup('env', 'HOME') }}/vast-zarf-packages"
 
-  # source=upload — three sub-modes:
-  #   - operator_bundle_path set        → scp outer .tar.gz, extract on master
-  #   - operator_init_path AND          → scp the two .tar.zst directly (no extract)
-  #     operator_dataengine_path set
+  # ─── source=upload only — three sub-modes ──────────────────────────────
+  # (a) operator_bundle_path set           → scp outer .tar.gz, master extracts
+  # (b) operator_init_path AND
+  #     operator_dataengine_path BOTH set  → scp the two .tar.zst as-is (no extract)
+  # If both (a) and (b) are set, (b) wins.
   operator_bundle_path: ""
   operator_init_path: /Users/yemalin.godonou/Documents/vast/dataengine/packages/zarf-init-amd64-v0.60.0.tar.zst
   operator_dataengine_path: /Users/yemalin.godonou/Documents/vast/dataengine/packages/zarf-package-dataengine-amd64-1.0.0.tar.zst
