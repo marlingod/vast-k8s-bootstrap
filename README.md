@@ -113,8 +113,19 @@ kubernetes/
 ## Quick start
 
 ```bash
-# 1. Install Galaxy collections + Python deps (Ansible, lint tools, kubernetes lib)
+# 1. Install everything into a project-local virtualenv (.venv/).
+#    NEVER touches your system Python. Other Python projects on the same
+#    machine keep their pinned versions of pyyaml, aiohttp, fastapi, etc.
 make install
+#   creates  .venv/                              # Python virtualenv
+#   pip-installs  requirements.txt               # ansible, ansible-lint, kubernetes, ...
+#   galaxy-installs  requirements.yml            # kubernetes.core, community.general, ...
+#   into  collections/ansible_collections/       # local to this repo
+
+# (Optional) activate the venv so `ansible`, `ansible-playbook`, `ansible-lint`
+# resolve from .venv/bin/ in your shell. Not required if you only use `make ...`
+# targets — they auto-detect .venv/.
+source .venv/bin/activate
 
 # 2. Initialize the vault password file (one-time per machine)
 mkdir -p ~/.config/vast-kubernetes
@@ -122,15 +133,17 @@ chmod 700 ~/.config/vast-kubernetes
 echo '<your-real-password>' > ~/.config/vast-kubernetes/vault_pass
 chmod 600 ~/.config/vast-kubernetes/vault_pass
 
-# 3. Encrypt the placeholder vault.yml (one-time per repo)
-ansible-vault encrypt inventory/group_vars/all/vault.yml
+# 3. Copy the example vault file and encrypt it
+cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
+$EDITOR inventory/group_vars/all/vault.yml             # fill in real secrets
+make vault-edit                                        # one-shot encrypt+edit
+# or directly: .venv/bin/ansible-vault encrypt inventory/group_vars/all/vault.yml
 
-# 4. Edit hosts + secrets
+# 4. Edit hosts
 $EDITOR inventory/hosts.ini
-make vault-edit                          # opens encrypted vault.yml in $EDITOR
 
 # 5. Verify before any real run (read-only)
-ansible all -m ping                      # confirm SSH + sudo work
+make ping                                # SSH + sudo proof on every host
 make check                               # full dry-run with diffs, no mutations
 
 # 6. Run a phase
