@@ -22,7 +22,7 @@ dependencies:
   community.general: ">=8.0.0"
   community.crypto: ">=2.0.0"
   ansible.posix: ">=1.5.0"
-repository: https://github.com/vast-data/kubernetes
+repository: https://github.com/marlingod/vast-k8s-bootstrap
 build_ignore:
   - .cache
   - tests
