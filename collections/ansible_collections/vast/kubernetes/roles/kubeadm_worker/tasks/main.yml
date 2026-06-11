@@ -5,9 +5,12 @@
     path: /etc/kubernetes/kubelet.conf
   register: kubelet_conf
 
-# Verify the join script was fetched from the master (kubeadm_master role
-# generates and fetches it). In --check on a fresh cluster the master only
-# simulated kubeadm init so the file doesn't exist on the controller.
+# The kubeadm_master role saved the join script to ./k8s-join-command.sh
+# on the controller (the operator's Mac, where ansible-playbook runs).
+# We read it once on the controller and pass its text directly to the
+# worker as the join command — no scp to /tmp on the worker, no slurp
+# from /tmp afterwards. Eliminates an entire class of "/tmp/k8s-join-
+# command.sh: file not found" races.
 - name: Stat join command on local control machine
   ansible.builtin.stat:
     path: ./k8s-join-command.sh
@@ -27,19 +30,38 @@
     - ansible_check_mode | bool
     - not join_script_stat.stat.exists
 
-- name: Copy join command from local control machine
-  ansible.builtin.copy:
-    src: ./k8s-join-command.sh
-    dest: /tmp/k8s-join-command.sh
-    mode: '0700'
+- name: Fail clearly if join script is missing in a real run
+  ansible.builtin.fail:
+    msg: |
+      ./k8s-join-command.sh not found on the controller (this Mac).
+
+      kubeadm_master should have fetched it during the previous play
+      (master init → kubeadm token create --print-join-command → fetch
+      to local control machine).
+
+      Likely causes:
+        1. You ran with --tags k8s_worker but skipped k8s_master.
+           Re-run `make k8s` without tag filtering so kubeadm_master runs first.
+        2. kubeadm_master failed silently. Check its output for errors,
+           or manually run on master:
+               kubeadm token create --print-join-command > /tmp/join.sh
+               scp <master>:/tmp/join.sh ./k8s-join-command.sh
+        3. ansible-playbook was invoked from a different working directory.
+           Make sure you run `make k8s` from the repo root.
   when:
     - not kubelet_conf.stat.exists
-    - join_script_stat.stat.exists
+    - not ansible_check_mode | bool
+    - not join_script_stat.stat.exists
 
-- name: Read join command
+- name: Read join command from controller
+  # delegate_to: localhost reads the file on the operator's Mac. The
+  # base64-encoded contents are passed via join_command_content.content
+  # to every worker that needs them. Never touches the worker's filesystem.
   ansible.builtin.slurp:
-    src: /tmp/k8s-join-command.sh
+    src: ./k8s-join-command.sh
   register: join_command_content
+  delegate_to: localhost
+  become: false
   when:
     - not kubelet_conf.stat.exists
     - join_script_stat.stat.exists
@@ -49,14 +71,6 @@
   ansible.builtin.command: "{{ (join_command_content.content | b64decode | trim) }} --node-name={{ inventory_hostname }}"
   register: join_result
   changed_when: join_result.rc == 0
-  when:
-    - not kubelet_conf.stat.exists
-    - join_script_stat.stat.exists
-
-- name: Clean up join command file
-  ansible.builtin.file:
-    path: /tmp/k8s-join-command.sh
-    state: absent
   when:
     - not kubelet_conf.stat.exists
     - join_script_stat.stat.exists
