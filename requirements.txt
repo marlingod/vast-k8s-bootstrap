@@ -3,5 +3,4 @@ ansible-lint>=24.0
 kubernetes>=29.0
 pyyaml
 jsonpatch
-jmespath
 kubernetes-validate
