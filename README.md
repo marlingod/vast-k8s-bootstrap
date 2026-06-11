@@ -228,12 +228,12 @@ zarf_packages:
 
 Decision tree for `source`:
 
-| Your situation | Use |
-| --- | --- |
-| Files already on the master | `local` |
-| Master has internet egress; you have the SE link | `download` |
-| Master is air-gapped; **you** can reach the SE link from this Mac | `operator_download` (new) |
-| You already have the `.tar.zst` files on your Mac | `upload` |
+| Your situation | Use | Internet needed on |
+| --- | --- | --- |
+| Files already on the master | `local` | nobody |
+| Master has internet egress; you have the SE link | `download` | master |
+| Master is air-gapped; **you** can reach the SE link from this Mac | `operator_download` | operator (this Mac) |
+| You already have the `.tar.zst` files on your Mac | `upload` | nobody |
 
 #### B4. Storage class for Zarf seed-registry PVC
 
