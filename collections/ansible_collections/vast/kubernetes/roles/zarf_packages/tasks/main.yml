@@ -1,16 +1,20 @@
 ---
 # Ensure the two VAST Zarf .tar.zst packages exist on the controller (the
-# master) before plays 03/05 need them. Three sources are supported:
+# master) before plays 03/05 need them. Four sources are supported:
 #
-#   local    — both files already at zarf_packages.dir on the master
-#   download — fetch zarf_packages.bundle_url from a URL the master can reach
-#   upload   — scp from the operator's local machine (two flavors: "files"
-#              or "bundle" depending on which paths are set)
+#   local             — both files already at zarf_packages.dir on the master
+#   download          — master fetches zarf_packages.bundle_url directly
+#                       (master needs egress to the URL)
+#   operator_download — OPERATOR (this Mac) fetches the SE-provided URL into
+#                       operator_download_dir, then scp's to master.
+#                       Use when the master can't reach the URL but you can.
+#   upload            — operator scp's pre-existing file(s) to master
+#                       (two flavors: 'files' = two .tar.zst, 'bundle' = outer .tar.gz)
 
 - name: Validate zarf_packages.source
   ansible.builtin.fail:
-    msg: "zarf_packages.source={{ zarf_packages.source }} is not supported. Choose: local, download, upload."
-  when: zarf_packages.source not in ['local', 'download', 'upload']
+    msg: "zarf_packages.source={{ zarf_packages.source }} is not supported. Choose: local, download, operator_download, upload."
+  when: zarf_packages.source not in ['local', 'download', 'operator_download', 'upload']
 
 - name: Ensure packages dir exists
   ansible.builtin.file:
@@ -75,6 +79,73 @@
   when:
     - needs_fetch
     - zarf_packages.source == 'download'
+
+# ── source=operator_download — operator fetches URL, then uploads ──────
+
+- name: Validate bundle_url is set (source=operator_download)
+  ansible.builtin.fail:
+    msg: "zarf_packages.source=operator_download but zarf_packages.bundle_url is empty."
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'operator_download'
+    - (zarf_packages.bundle_url | default('') | length) == 0
+
+- name: Ensure operator download dir exists (source=operator_download)
+  ansible.builtin.file:
+    path: "{{ zarf_packages.operator_download_dir }}"
+    state: directory
+    mode: '0755'
+  delegate_to: localhost
+  become: false
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'operator_download'
+
+- name: Derive operator-local bundle path (source=operator_download)
+  ansible.builtin.set_fact:
+    operator_local_bundle_path: "{{ zarf_packages.operator_download_dir }}/{{ zarf_packages.bundle_url | basename }}"
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'operator_download'
+
+- name: Stat operator-local bundle (source=operator_download)
+  ansible.builtin.stat:
+    path: "{{ operator_local_bundle_path }}"
+  register: operator_bundle_stat
+  delegate_to: localhost
+  become: false
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'operator_download'
+
+- name: Fetch SE bundle to operator (source=operator_download)
+  ansible.builtin.get_url:
+    url: "{{ zarf_packages.bundle_url }}"
+    dest: "{{ operator_local_bundle_path }}"
+    mode: '0644'
+    timeout: 1800       # bundles are large; allow up to 30 min
+  delegate_to: localhost
+  become: false
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'operator_download'
+    - not operator_bundle_stat.stat.exists
+
+- name: Derive bundle path on master (source=operator_download)
+  ansible.builtin.set_fact:
+    bundle_master_path: "{{ zarf_packages.dir }}/{{ zarf_packages.bundle_url | basename }}"
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'operator_download'
+
+- name: Scp bundle operator → master (source=operator_download)
+  ansible.builtin.copy:
+    src: "{{ operator_local_bundle_path }}"
+    dest: "{{ bundle_master_path }}"
+    mode: '0644'
+  when:
+    - needs_fetch
+    - zarf_packages.source == 'operator_download'
 
 # ── source=upload — detect mode (files vs bundle) ───────────────────────
 
@@ -141,7 +212,7 @@
     - zarf_packages.source == 'upload'
     - upload_mode == 'bundle'
 
-# ── extract outer bundle if download or upload/bundle ───────────────────
+# ── extract outer bundle if download / operator_download / upload-bundle ──
 
 - name: Extract outer bundle into packages dir
   ansible.builtin.unarchive:
@@ -152,6 +223,7 @@
   when:
     - needs_fetch
     - (zarf_packages.source == 'download') or
+      (zarf_packages.source == 'operator_download') or
       (zarf_packages.source == 'upload' and upload_mode == 'bundle')
 
 # ── final verify ────────────────────────────────────────────────────────

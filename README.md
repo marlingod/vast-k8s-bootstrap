@@ -139,8 +139,9 @@ $EDITOR inventory/group_vars/all/vault.yml             # fill in real secrets
 make vault-edit                                        # one-shot encrypt+edit
 # or directly: .venv/bin/ansible-vault encrypt inventory/group_vars/all/vault.yml
 
-# 4. Edit hosts
+# 4. Edit hosts + cluster-specific config (see "Configure for your cluster" below)
 $EDITOR inventory/hosts.ini
+$EDITOR inventory/group_vars/all/vars.yml
 
 # 5. Verify before any real run (read-only)
 make ping                                # SSH + sudo proof on every host
@@ -158,6 +159,107 @@ make site
 # 7. Idempotency check
 make site                                # second run should report changed=0
 ```
+
+## Configure for your cluster
+
+Two files hold every per-cluster setting. Both live under `inventory/group_vars/all/`.
+
+### A. `inventory/hosts.ini` — your nodes
+
+```ini
+[masters]
+master ansible_host=10.143.2.26              # ← your master IP
+
+[workers]
+worker1 ansible_host=10.143.2.174            # ← your worker IP(s)
+# worker2 ansible_host=...
+```
+
+The rest of the inventory (`[csi_controller]`, `[zarf_controller]`, etc.)
+references those host aliases — you usually don't touch it.
+
+### B. `inventory/group_vars/all/vars.yml` — non-secret config
+
+The file is divided into four sections. Edit only what applies to your install.
+
+#### B1. K8s cluster (skip if you already have a healthy cluster)
+
+```yaml
+kubernetes_version: "1.35"                    # ≥ 1.33 (hard floor)
+pod_network_cidr:   "10.244.0.0/16"           # Flannel default; change for Calico
+flannel_version:    "v0.27.4"                 # pinned Flannel release
+```
+
+#### B2. CSI — TENANT-SCOPED (change per VAST tenant)
+
+```yaml
+vms_endpoint:  var203.selab.vastdata.com      # ← VMS hostname/IP
+vms_tenant:    "ca-tenant"                    # ← tenant the CSI runs in; "" if not multi-tenant
+
+storage_classes:                              # one StorageClass per key
+  ca-sc1:
+    vipPoolFQDN:  cavipool.selab-var203...    # ← must EXIST on the tenant
+    storagePath:  /ca-storage                 # ← view path the CSI mounts under
+    viewPolicy:   ca-tenant-nfs-policy        # ← must EXIST on the tenant
+    deletionPolicy: Delete
+  # add ca-sc2, ca-sc3, ... as needed
+```
+
+The credentials (`vault_vms_username` + `vault_vms_password` OR
+`vault_vms_token`) go in `vault.yml`, not here.
+
+#### B3. Zarf packages — how the two `.tar.zst` files reach the master
+
+```yaml
+zarf_packages:
+  source: operator_download   # local | download | operator_download | upload
+  dir:    "/home/{{ ansible_user }}/vast-zarf-packages"
+
+  # For source=download OR source=operator_download:
+  bundle_url: "https://files.vastdata.com/vast_dataengine_release_<N>_<pipeline>.tar.gz"
+
+  # For source=operator_download — where on YOUR Mac to cache the download:
+  operator_download_dir: "{{ lookup('env', 'HOME') }}/vast-zarf-packages"
+
+  # For source=upload (instead of download):
+  operator_init_path:       /path/on/your/mac/zarf-init-amd64-v0.60.0.tar.zst
+  operator_dataengine_path: /path/on/your/mac/zarf-package-dataengine-amd64-1.0.0.tar.zst
+```
+
+Decision tree for `source`:
+
+| Your situation | Use |
+| --- | --- |
+| Files already on the master | `local` |
+| Master has internet egress; you have the SE link | `download` |
+| Master is air-gapped; **you** can reach the SE link from this Mac | `operator_download` (new) |
+| You already have the `.tar.zst` files on your Mac | `upload` |
+
+#### B4. Storage class for Zarf seed-registry PVC
+
+```yaml
+storage:
+  provisioner: byo            # byo | vast-csi | local-path | none
+  class_name:  ca-sc2         # which StorageClass to mark default (byo / local-path)
+```
+
+If you ran `make csi` first, use `provisioner: byo` and set `class_name`
+to whichever class you want to be cluster default. For non-VAST quick
+tests, `local-path` installs Rancher's local-path-provisioner.
+
+### C. `inventory/group_vars/all/vault.yml` — secrets
+
+After `cp vault.yml.example vault.yml`, fill in:
+
+```yaml
+vault_ansible_password:        "<sudo password on your nodes>"
+vault_ansible_become_password: "<same as above; can differ if your sudo prompts>"
+vault_vms_token:               ""                    # preferred; OR…
+vault_vms_username:            "ca-tenant-admin"     # …user+pass
+vault_vms_password:            "<VMS password>"
+```
+
+Then `ansible-vault encrypt inventory/group_vars/all/vault.yml`.
 
 ## Role catalog (19 roles)
 

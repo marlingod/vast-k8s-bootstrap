@@ -85,9 +85,30 @@ zarf_registry_hpa_auto_size: true
 legacy_init_rename: true
 
 zarf_packages:
+  # Pick ONE source mode:
+  #   local             → both .tar.zst already on master under `dir` below
+  #   download          → master fetches `bundle_url` directly (master needs egress)
+  #   operator_download → OPERATOR (this Mac) fetches `bundle_url` from the
+  #                       SE-provided link, then scp's to master.
+  #                       Use when master is air-gapped but you have internet.
+  #   upload            → operator scp's pre-existing file(s) to master
   source: upload
+
+  # On-master cache for the .tar.zst files (used by every source mode).
   dir: "/home/{{ ansible_user }}/vast-zarf-packages"
+
+  # source=download OR source=operator_download — SE-provided download URL
+  # (e.g. https://files.vastdata.com/vast_dataengine_release_N_pipeline.tar.gz)
   bundle_url: ""
+
+  # source=operator_download — where on this Mac to cache the download.
+  # Idempotent: if the bundle is already there, the operator skips the fetch.
+  operator_download_dir: "{{ lookup('env', 'HOME') }}/vast-zarf-packages"
+
+  # source=upload — three sub-modes:
+  #   - operator_bundle_path set        → scp outer .tar.gz, extract on master
+  #   - operator_init_path AND          → scp the two .tar.zst directly (no extract)
+  #     operator_dataengine_path set
   operator_bundle_path: ""
   operator_init_path: /Users/yemalin.godonou/Documents/vast/dataengine/packages/zarf-init-amd64-v0.60.0.tar.zst
   operator_dataengine_path: /Users/yemalin.godonou/Documents/vast/dataengine/packages/zarf-package-dataengine-amd64-1.0.0.tar.zst
