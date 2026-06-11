@@ -2,8 +2,11 @@
 # Install Helm 3 on the controller host. Idempotent via `creates:` guard.
 
 - name: Check kubectl is on PATH
-  ansible.builtin.command: command -v kubectl
+  # `command` is a shell builtin, can't be exec'd via ansible.builtin.command.
+  ansible.builtin.shell: command -v kubectl
   changed_when: false
+  args:
+    executable: /bin/bash
 
 - name: Check kubectl can reach the cluster
   ansible.builtin.command: kubectl cluster-info
@@ -12,10 +15,12 @@
   changed_when: false
 
 - name: Check for existing helm
-  ansible.builtin.command: command -v helm
+  ansible.builtin.shell: command -v helm
   register: helm_check
   failed_when: false
   changed_when: false
+  args:
+    executable: /bin/bash
 
 - name: Download Helm tarball
   ansible.builtin.get_url:

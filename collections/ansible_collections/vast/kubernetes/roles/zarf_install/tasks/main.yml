@@ -3,10 +3,12 @@
 # is true and a zarf binary is already on PATH.
 
 - name: Check for existing zarf binary
-  ansible.builtin.command: command -v zarf
+  ansible.builtin.shell: command -v zarf
   register: zarf_check
   failed_when: false
   changed_when: false
+  args:
+    executable: /bin/bash
 
 - name: Skip — zarf already installed
   ansible.builtin.debug:
