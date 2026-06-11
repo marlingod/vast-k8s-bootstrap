@@ -31,19 +31,29 @@ vast_csi_chart_version: ""   # empty = latest; pin "2.6.5" for prod
 csi_driver_name: vastdriver.vastdata.com
 vast_secret_name: vast-csi-secret
 
-# VAST cluster / VMS connection
+# -------------------------------------------------------------------------
+# TENANT-SCOPED — change every line here for each VAST tenant you deploy
+# the CSI driver into. Credentials for this tenant live in vault.yml.
+# -------------------------------------------------------------------------
+
+# Hostname/IP of the VMS the CSI driver authenticates against.
 vms_endpoint: var203.selab.vastdata.com
+
+# VAST cluster tenant name. The CSI driver is deployed INSIDE this tenant
+# and only sees its file systems / VIP pools / view policies. Leave "" if
+# the cluster is not multi-tenant.
 vms_tenant: "ca-tenant"
+
 verify_ssl: false
 
-# Auth (token preferred; user/pass fallback). Sourced from vault.yml.
+# Auth — pulled from vault.yml. Provide a token OR username+password.
 vms_token: "{{ vault_vms_token }}"
 vms_username: "{{ vault_vms_username }}"
 vms_password: "{{ vault_vms_password }}"
 
-install_snapshot_crds: true
-snapshot_crds_version: v7.0.1
-
+# One StorageClass per key. Each must reference a VIP pool, view policy,
+# and storage path that ALREADY EXIST on the VAST side under THIS tenant.
+# See the VAST KB doc linked in README.md before changing.
 storage_classes:
   ca-sc1:
     vipPoolFQDN: cavipool.selab-var203.selab.vastdata.com
@@ -56,6 +66,12 @@ storage_classes:
     storagePath: /ca-nfs
     viewPolicy: ca-tenant-nfs-policy
     deletionPolicy: Delete
+
+# -------------------------------------------------------------------------
+# Non-tenant CSI knobs
+# -------------------------------------------------------------------------
+install_snapshot_crds: true
+snapshot_crds_version: v7.0.1
 
 # =========================================================================
 # zarf (DataEngine playbook)

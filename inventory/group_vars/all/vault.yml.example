@@ -16,7 +16,15 @@ vault_ansible_password: "CHANGE_ME"
 vault_ansible_become_password: "CHANGE_ME"
 
 # --- VAST VMS auth for the CSI driver ---
+# Credentials only. The tenant NAME (vms_tenant), VMS endpoint, VIP pool,
+# view policy, and storage path are NOT secrets and live in
+# inventory/group_vars/all/vars.yml under the "TENANT-SCOPED" block.
+#
+# For a CSI install inside a VAST tenant, use credentials of a user that
+# (a) exists in the tenant (e.g. tenant-admin), and (b) has rights to
+# create/mount file systems, VIP pools, and snapshots.
+#
 # Provide vault_vms_token OR both vault_vms_username + vault_vms_password.
 vault_vms_token: ""
-vault_vms_username: "CHANGE_ME"
+vault_vms_username: "CHANGE_ME"   # e.g. "ca-tenant-admin"
 vault_vms_password: "CHANGE_ME"
