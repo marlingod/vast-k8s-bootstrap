@@ -49,9 +49,13 @@
 # ── provisioner=local-path ───────────────────────────────────────────────
 
 - name: Apply local-path provisioner manifest (source=local)
+  # See note in knative_crds role: kubernetes.core.k8s runs on the master,
+  # so src: would look on the master for a Mac-side path. Use definition:
+  # with lookup('file', ...) which reads on the controller and ships the
+  # parsed YAML to the module as a literal arg.
   kubernetes.core.k8s:
     state: present
-    src: "{{ role_path }}/files/{{ storage.local_path.manifest_path }}"
+    definition: "{{ lookup('file', role_path + '/files/' + storage.local_path.manifest_path) | from_yaml_all | list }}"
   when:
     - default_sc_name | length == 0
     - storage.provisioner == 'local-path'

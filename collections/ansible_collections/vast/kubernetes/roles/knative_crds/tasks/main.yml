@@ -25,9 +25,14 @@
   when: not crds_missing
 
 - name: Apply bundled CRD manifest (source=local)
+  # kubernetes.core.k8s runs on the master (that's where the kubeconfig
+  # lives), so `src:` would try to open a Mac-side path on the master and
+  # fail. Use `definition:` + lookup('file', ...) instead — the lookup runs
+  # on the CONTROLLER (the Mac) and the parsed multi-doc YAML is passed
+  # as a module arg to the master.
   kubernetes.core.k8s:
     state: present
-    src: "{{ role_path }}/files/{{ knative_crds.manifest_path }}"
+    definition: "{{ lookup('file', role_path + '/files/' + knative_crds.manifest_path) | from_yaml_all | list }}"
   when:
     - crds_missing
     - knative_crds.source == 'local'
