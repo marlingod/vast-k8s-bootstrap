@@ -71,20 +71,26 @@
     update_cache: true
   when: ansible_os_family == "Debian"
 
-- name: Download Docker GPG key (Debian)
+# Bootstrap: the Docker GPG key + apt repo must be REALLY written even in
+# --check mode, otherwise the next `apt install containerd.io` simulation
+# fails ("No package matching 'containerd.io' is available") because the
+# repo file isn't on disk and apt-update never sees the repo. Writing the
+# key file and the .list source is benign (no service touched).
+- name: Download Docker GPG key (Debian) [bootstrap, runs in check mode]
   ansible.builtin.get_url:
     url: https://download.docker.com/linux/ubuntu/gpg
     dest: /etc/apt/keyrings/docker.asc
     mode: '0644'
     force: true
   when: ansible_os_family == "Debian"
+  check_mode: false
 
 - name: Compute Docker arch (Debian)
   ansible.builtin.set_fact:
     _docker_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else ansible_architecture }}"
   when: ansible_os_family == "Debian"
 
-- name: Add Docker repository (Debian)
+- name: Add Docker repository (Debian) [bootstrap, runs in check mode]
   ansible.builtin.apt_repository:
     repo: >-
       deb [arch={{ _docker_arch }} signed-by=/etc/apt/keyrings/docker.asc]
@@ -94,6 +100,7 @@
     filename: docker
     update_cache: true
   when: ansible_os_family == "Debian"
+  check_mode: false
 
 - name: Install containerd (Debian)
   ansible.builtin.apt:

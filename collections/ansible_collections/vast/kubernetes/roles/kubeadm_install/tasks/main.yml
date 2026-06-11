@@ -12,30 +12,37 @@
     success_msg: "kubernetes_version={{ kubernetes_version }} (>=1.33) ✓"
   run_once: true                              # one host is enough to validate
 
-- name: Download Kubernetes GPG key (Debian)
+# Bootstrap: same pattern as the containerd Docker repo. Without writing
+# the GPG key + repo .list for real even in --check mode, the next
+# `apt install kubelet kubeadm kubectl` simulation fails because apt's
+# cache has no idea what pkgs.k8s.io is. Writing the files is benign.
+- name: Download Kubernetes GPG key (Debian) [bootstrap, runs in check mode]
   ansible.builtin.get_url:
     url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/Release.key"
     dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
     mode: '0644'
     force: true
   when: ansible_os_family == "Debian"
+  check_mode: false
 
-- name: Remove legacy Kubernetes apt config (Debian)
+- name: Remove legacy Kubernetes apt config (Debian) [bootstrap, runs in check mode]
   ansible.builtin.shell: |
     rm -f /etc/apt/sources.list.d/kubernetes.list
     rm -f /etc/apt/trusted.gpg.d/pkgs_k8s_io_core_stable_v*_deb.gpg
   changed_when: false
   when: ansible_os_family == "Debian"
+  check_mode: false
 
-- name: Add Kubernetes repository (Debian)
+- name: Add Kubernetes repository (Debian) [bootstrap, runs in check mode]
   ansible.builtin.apt_repository:
     repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/ /"
     state: present
     filename: kubernetes
     update_cache: true
   when: ansible_os_family == "Debian"
+  check_mode: false
 
-- name: Add Kubernetes repository (RHEL)
+- name: Add Kubernetes repository (RHEL) [bootstrap, runs in check mode]
   ansible.builtin.yum_repository:
     name: kubernetes
     description: Kubernetes
@@ -44,6 +51,7 @@
     gpgkey: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/rpm/repodata/repomd.xml.key"
     enabled: true
   when: ansible_os_family == "RedHat"
+  check_mode: false
 
 - name: Install Kubernetes components (Debian)
   ansible.builtin.apt:
