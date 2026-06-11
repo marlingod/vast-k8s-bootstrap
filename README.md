@@ -7,6 +7,78 @@ for K8s user provisioning when an Ansible controller isn't available.
 **Status:** Verified end-to-end against a live 1.35 cluster with `make check`
 (82 tasks on master, 32 on worker, 0 failures). See [Verification](#verification).
 
+## Before you start — VAST-side prerequisites
+
+This repo handles the K8s + Ansible plumbing only. **Several prerequisites
+on the VAST cluster side are not automated** and must be done first by
+following the VAST KB documentation linked below.
+
+### 1. VAST CSI Driver prerequisites
+
+Before running `make csi`, complete the VAST-side prep documented in:
+
+> 📘 **[Steps to Deploy VAST CSI Driver](https://kb.vastdata.com/documentation/docs/steps-to-deploy-vast-csi-driver)**
+
+In particular, on the VAST cluster you need:
+
+- A **VMS user / API token** with rights to create file systems, VIP pools,
+  view policies, snapshots, and quotas. The token (or username + password)
+  is what you put under `vault_vms_token` / `vault_vms_username` /
+  `vault_vms_password` in `inventory/group_vars/all/vault.yml`.
+- A **VIP pool** (or VIP pool FQDN) for NFS mounts.
+- A **view policy** and storage path the CSI driver can provision under.
+- The endpoint hostname/IP of the VMS — goes in `vms_endpoint` in
+  `inventory/group_vars/all/vars.yml`.
+
+Mirror those values into `storage_classes:` in `vars.yml` (one entry per
+StorageClass you want this collection to render into the rendered
+`values.yaml` Helm input).
+
+### 2. VAST DataEngine prerequisites
+
+Before running `make zarf`, complete the VAST-side prep documented in:
+
+> 📘 **[Enabling Data Engine on a VAST Cluster Tenant — Establish Prerequisite External Services](https://kb.vastdata.com/documentation/docs/enabling-data-engine-on-a-vast-cluster-tenant-1#establish-prerequisite-external-services)**
+
+This is mandatory — the playbook does **not** provision the VAST tenant,
+S3 view policy, NATS access, or Kafka brokers on the VAST side. You will:
+
+- **Obtain the two `.tar.zst` Zarf packages from your VAST SE.** They are
+  not in any public release feed:
+  - `zarf-init-amd64-v<VERSION>.tar.zst`
+  - `zarf-package-dataengine-amd64-<VERSION>.tar.zst`
+- **Drop them in a local directory on this machine** (the operator's Mac
+  or Linux box, not the K8s master). Default expected paths are in
+  `inventory/group_vars/all/vars.yml` under `zarf_packages.operator_*_path`:
+  ```yaml
+  zarf_packages:
+    source: upload                              # operator → master scp
+    dir: "/home/{{ ansible_user }}/vast-zarf-packages"
+    operator_init_path: /Users/<you>/Documents/vast/dataengine/packages/zarf-init-amd64-v0.60.0.tar.zst
+    operator_dataengine_path: /Users/<you>/Documents/vast/dataengine/packages/zarf-package-dataengine-amd64-1.0.0.tar.zst
+  ```
+  The `zarf_packages` role scp's them to `zarf_packages.dir` on the master
+  before `zarf init` / `zarf package deploy` consume them.
+- **Set up the prerequisite external services** described in the KB doc
+  (tenant, S3 access, NATS, network policies, etc.) so the DataEngine
+  workloads have somewhere to land.
+
+### 3. K8s cluster prerequisites
+
+The `k8s_cluster.yml` playbook assumes vanilla VMs (Debian/Ubuntu/RHEL) with:
+
+- SSH reachable from this machine (Ansible control node).
+- A sudo-capable user (default `vastdata`) on every node.
+- Outbound HTTPS to `pkgs.k8s.io`, `download.docker.com`, GitHub releases
+  for Flannel and external-snapshotter CRDs (unless you run air-gapped, in
+  which case mirror those or use the `local` source mode where supported).
+- Kubernetes ≥ 1.33 if you already have a cluster (hard floor).
+
+If you already have a healthy cluster (the common case at VAST customer
+sites), skip `make k8s` entirely — `make csi` and `make zarf` will run
+against whatever cluster `inventory/group_vars/all/vault.yml`'s kubeconfig
+on the master points at.
+
 ## Layout
 
 ```
