@@ -96,11 +96,28 @@
 # ── provisioner=byo ───────────────────────────────────────────────────────
 
 - name: Verify named StorageClass exists (provisioner=byo)
-  kubernetes.core.k8s_info:
-    kind: StorageClass
-    name: "{{ storage.class_name }}"
-  register: byo_sc
-  failed_when: byo_sc.resources | length == 0
+  ansible.builtin.assert:
+    that:
+      - storage.class_name in (all_sc.resources | map(attribute='metadata.name') | list)
+    fail_msg: |
+      StorageClass "{{ storage.class_name }}" not found in the cluster.
+
+      Cluster currently has these StorageClasses:
+        {{ (all_sc.resources | map(attribute='metadata.name') | list) | default(['(none)']) | join(', ') }}
+
+      Your vars.yml defines these CSI StorageClasses (storage_classes:):
+        {{ storage_classes.keys() | list | join(', ') }}
+
+      Likely fixes:
+        1. Run `make csi` first — it installs the VAST CSI driver and
+           creates the classes listed under storage_classes:. After that,
+           {{ storage_classes.keys() | list | join(' / ') }} will exist on the cluster.
+        2. Edit storage.class_name in inventory/group_vars/all/vars.yml so
+           it matches one of the existing classes
+           (e.g. storage.class_name: "{{ storage_classes.keys() | list | first | default('<your-class>') }}").
+        3. Set storage.provisioner: vast-csi to skip the check entirely —
+           use this if a default StorageClass is already in place from
+           somewhere else.
   when:
     - default_sc_name | length == 0
     - storage.provisioner == 'byo'
