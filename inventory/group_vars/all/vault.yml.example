@@ -1,0 +1,22 @@
+---
+# Template for vault.yml — copy, fill in real values, then encrypt:
+#
+#   cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
+#   $EDITOR inventory/group_vars/all/vault.yml
+#   ansible-vault encrypt inventory/group_vars/all/vault.yml
+#
+# After encryption, edit with:
+#
+#   make vault-edit          # or: ansible-vault edit inventory/group_vars/all/vault.yml
+#
+# vault.yml itself is gitignored — never commit decrypted secrets.
+
+# --- SSH / sudo on every host ---
+vault_ansible_password: "CHANGE_ME"
+vault_ansible_become_password: "CHANGE_ME"
+
+# --- VAST VMS auth for the CSI driver ---
+# Provide vault_vms_token OR both vault_vms_username + vault_vms_password.
+vault_vms_token: ""
+vault_vms_username: "CHANGE_ME"
+vault_vms_password: "CHANGE_ME"
