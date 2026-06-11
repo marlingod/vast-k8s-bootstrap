@@ -5,27 +5,58 @@
     path: /etc/kubernetes/kubelet.conf
   register: kubelet_conf
 
+# Verify the join script was fetched from the master (kubeadm_master role
+# generates and fetches it). In --check on a fresh cluster the master only
+# simulated kubeadm init so the file doesn't exist on the controller.
+- name: Stat join command on local control machine
+  ansible.builtin.stat:
+    path: ./k8s-join-command.sh
+  register: join_script_stat
+  delegate_to: localhost
+  become: false
+  when: not kubelet_conf.stat.exists
+
+- name: Skip worker join — no join script available (check mode)
+  ansible.builtin.debug:
+    msg: |
+      [check mode] kubeadm_master only simulated `kubeadm init`, so
+      ./k8s-join-command.sh wasn't generated. A real `make site` run would
+      use that script + `kubeadm join` here to register this worker.
+  when:
+    - not kubelet_conf.stat.exists
+    - ansible_check_mode | bool
+    - not join_script_stat.stat.exists
+
 - name: Copy join command from local control machine
   ansible.builtin.copy:
     src: ./k8s-join-command.sh
     dest: /tmp/k8s-join-command.sh
     mode: '0700'
-  when: not kubelet_conf.stat.exists
+  when:
+    - not kubelet_conf.stat.exists
+    - join_script_stat.stat.exists
 
 - name: Read join command
   ansible.builtin.slurp:
     src: /tmp/k8s-join-command.sh
   register: join_command_content
-  when: not kubelet_conf.stat.exists
+  when:
+    - not kubelet_conf.stat.exists
+    - join_script_stat.stat.exists
 
 - name: Join worker to cluster
   # Append --node-name so the worker registers under its inventory name.
   ansible.builtin.command: "{{ (join_command_content.content | b64decode | trim) }} --node-name={{ inventory_hostname }}"
   register: join_result
   changed_when: join_result.rc == 0
-  when: not kubelet_conf.stat.exists
+  when:
+    - not kubelet_conf.stat.exists
+    - join_script_stat.stat.exists
 
 - name: Clean up join command file
   ansible.builtin.file:
     path: /tmp/k8s-join-command.sh
     state: absent
+  when:
+    - not kubelet_conf.stat.exists
+    - join_script_stat.stat.exists

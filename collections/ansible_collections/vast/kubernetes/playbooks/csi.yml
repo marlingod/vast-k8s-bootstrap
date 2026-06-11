@@ -18,6 +18,29 @@
   module_defaults:
     group/k8s:                                # applies to every kubernetes.core module
       kubeconfig: "{{ csi_kubeconfig | default('/etc/kubernetes/admin.conf') }}"
+  pre_tasks:
+    # In --check mode on a fresh cluster, kubeadm init was only simulated
+    # so admin.conf doesn't exist. Every kubernetes.core task downstream
+    # would crash with "Invalid kube-config file". Skip the play instead.
+    - name: Stat admin.conf
+      ansible.builtin.stat:
+        path: "{{ csi_kubeconfig | default('/etc/kubernetes/admin.conf') }}"
+      register: _csi_kubeconfig_stat
+    - name: Note — no kubeconfig present, CSI play will skip (check mode)
+      ansible.builtin.debug:
+        msg: |
+          [check mode] admin.conf is missing. A real `make site` run would
+          install Helm, apply snapshot CRDs, render values.yaml from the
+          rendered template, and `helm upgrade --install` the VAST CSI
+          driver into the {{ csi_namespace }} namespace.
+      when:
+        - ansible_check_mode | bool
+        - not _csi_kubeconfig_stat.stat.exists
+    - name: End CSI play — no kubeconfig (check mode on fresh cluster)
+      ansible.builtin.meta: end_play
+      when:
+        - ansible_check_mode | bool
+        - not _csi_kubeconfig_stat.stat.exists
   roles:
     - vast.kubernetes.python_k8s_client
     - vast.kubernetes.helm_install

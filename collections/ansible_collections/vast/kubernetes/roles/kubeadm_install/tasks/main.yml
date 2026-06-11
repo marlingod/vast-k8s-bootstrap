@@ -73,6 +73,15 @@
     disable_excludes: kubernetes
   when: ansible_os_family == "RedHat"
 
+- name: Stat kubelet binary (proxy for "K8s really installed")
+  ansible.builtin.stat:
+    path: /usr/bin/kubelet
+  register: kubelet_bin
+  when: ansible_os_family == "Debian"
+
+# dpkg_selections fails in --check on fresh nodes ("Failed to find package
+# 'kubectl' to perform selection 'hold'") because the apt install above was
+# simulated, not real. Skip if check mode AND package not actually installed.
 - name: Hold Kubernetes packages (Debian)
   ansible.builtin.dpkg_selections:
     name: "{{ item }}"
@@ -81,10 +90,14 @@
     - kubelet
     - kubeadm
     - kubectl
-  when: ansible_os_family == "Debian"
+  when:
+    - ansible_os_family == "Debian"
+    - kubelet_bin.stat.exists or not ansible_check_mode
 
+# Same as dpkg hold: needs kubelet to really exist on disk.
 - name: Enable kubelet service
   ansible.builtin.systemd:
     name: kubelet
     enabled: true
     state: started
+  when: kubelet_bin.stat.exists or not ansible_check_mode

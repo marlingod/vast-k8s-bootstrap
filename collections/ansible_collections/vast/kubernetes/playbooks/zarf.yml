@@ -21,6 +21,27 @@
   module_defaults:
     group/k8s:
       kubeconfig: "{{ sc_kubeconfig | default('/etc/kubernetes/admin.conf') }}"
+  pre_tasks:
+    - name: Stat admin.conf
+      ansible.builtin.stat:
+        path: "{{ sc_kubeconfig | default('/etc/kubernetes/admin.conf') }}"
+      register: _zarf_kubeconfig_stat
+    - name: Note — no kubeconfig present, Zarf play will skip (check mode)
+      ansible.builtin.debug:
+        msg: |
+          [check mode] admin.conf is missing. A real `make site` run would
+          install the zarf CLI, scp/fetch the SE-provided .tar.zst packages,
+          ensure a default StorageClass, pre-install knative-operator CRDs,
+          run `zarf init`, create vast_namespaces, and `zarf package deploy`
+          the DataEngine.
+      when:
+        - ansible_check_mode | bool
+        - not _zarf_kubeconfig_stat.stat.exists
+    - name: End Zarf play — no kubeconfig (check mode on fresh cluster)
+      ansible.builtin.meta: end_play
+      when:
+        - ansible_check_mode | bool
+        - not _zarf_kubeconfig_stat.stat.exists
   roles:
     - vast.kubernetes.python_k8s_client
     - vast.kubernetes.zarf_install

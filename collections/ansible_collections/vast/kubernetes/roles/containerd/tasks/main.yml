@@ -140,10 +140,31 @@
     state: directory
     mode: '0755'
 
+- name: Stat existing containerd config
+  ansible.builtin.stat:
+    path: /etc/containerd/config.toml
+  register: containerd_config_stat
+
+# In --check on a fresh node, the containerd.io apt task only simulated —
+# so /usr/bin/containerd doesn't really exist, the `containerd config default`
+# shell would fail, and the two `replace` tasks below would fail with
+# "Path /etc/containerd/config.toml does not exist". Skip the config block
+# in that one combination and tell the user what a real run would do.
+- name: Skip containerd config — package not really installed yet (check mode)
+  ansible.builtin.debug:
+    msg: |
+      [check mode] containerd.io was simulated as installed, but the binary
+      isn't on disk yet. Skipping `containerd config default`, CRI-plugin
+      enable, and SystemdCgroup=true. A real `make site` run will do them.
+  when:
+    - ansible_check_mode | bool
+    - not containerd_config_stat.stat.exists
+
 - name: Generate default containerd config
   ansible.builtin.shell: containerd config default > /etc/containerd/config.toml
   changed_when: true
   notify: Restart containerd
+  when: not ansible_check_mode or containerd_config_stat.stat.exists
 
 - name: Ensure CRI plugin is enabled (defensive)
   ansible.builtin.replace:
@@ -151,6 +172,7 @@
     regexp: '^disabled_plugins\s*=.*$'
     replace: 'disabled_plugins = []'
   notify: Restart containerd
+  when: not ansible_check_mode or containerd_config_stat.stat.exists
 
 - name: Enable SystemdCgroup in containerd
   ansible.builtin.replace:
@@ -158,3 +180,4 @@
     regexp: 'SystemdCgroup = false'
     replace: 'SystemdCgroup = true'
   notify: Restart containerd
+  when: not ansible_check_mode or containerd_config_stat.stat.exists

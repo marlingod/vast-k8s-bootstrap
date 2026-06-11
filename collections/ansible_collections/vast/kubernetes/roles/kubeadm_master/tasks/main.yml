@@ -19,6 +19,28 @@
   changed_when: kubeadm_init.rc == 0
   when: not k8s_init_check.stat.exists
 
+# Re-stat admin.conf — kubeadm init may have just been simulated in check
+# mode (k8s_init_check.stat.exists is True in check mode if file existed
+# before, but on a fresh node we need the post-init state to gate the rest).
+- name: Re-stat /etc/kubernetes/admin.conf (post-kubeadm-init)
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: admin_conf_stat
+
+# In --check on a fresh master, admin.conf was simulated and doesn't exist.
+# Skip the kubeconfig-copy + CNI + join-token tasks; tell the user what
+# a real run would do.
+- name: Skip post-kubeadm-init steps — admin.conf not really present (check mode)
+  ansible.builtin.debug:
+    msg: |
+      [check mode] kubeadm init was simulated. A real `make site` run would
+      copy /etc/kubernetes/admin.conf to ~/.kube/config (root + {{ ansible_user }}),
+      apply Flannel CNI from {{ flannel_version }}, and generate a worker
+      join token.
+  when:
+    - ansible_check_mode | bool
+    - not admin_conf_stat.stat.exists
+
 - name: Create .kube directory for {{ ansible_user }}
   ansible.builtin.file:
     path: "/home/{{ ansible_user }}/.kube"
@@ -26,6 +48,7 @@
     owner: "{{ ansible_user }}"
     group: "{{ ansible_user }}"
     mode: '0755'
+  when: admin_conf_stat.stat.exists or not ansible_check_mode
 
 - name: Copy admin.conf to {{ ansible_user }}
   ansible.builtin.copy:
@@ -35,12 +58,14 @@
     owner: "{{ ansible_user }}"
     group: "{{ ansible_user }}"
     mode: '0600'
+  when: admin_conf_stat.stat.exists or not ansible_check_mode
 
 - name: Create .kube directory for root
   ansible.builtin.file:
     path: /root/.kube
     state: directory
     mode: '0755'
+  when: admin_conf_stat.stat.exists or not ansible_check_mode
 
 - name: Copy admin.conf to root
   ansible.builtin.copy:
@@ -48,11 +73,13 @@
     dest: /root/.kube/config
     remote_src: true
     mode: '0600'
+  when: admin_conf_stat.stat.exists or not ansible_check_mode
 
 - name: Install Flannel CNI
   kubernetes.core.k8s:
     state: present
     src: "https://github.com/flannel-io/flannel/releases/download/{{ flannel_version }}/kube-flannel.yml"
+  when: admin_conf_stat.stat.exists or not ansible_check_mode
 
 - name: Wait for Flannel pods to be ready
   kubernetes.core.k8s_info:
@@ -69,11 +96,13 @@
   delay: 10
   until: flannel_ready is success
   failed_when: false
+  when: admin_conf_stat.stat.exists or not ansible_check_mode
 
 - name: Generate join command
   ansible.builtin.command: kubeadm token create --print-join-command
   register: join_command
   changed_when: false
+  when: admin_conf_stat.stat.exists or not ansible_check_mode
 
 - name: Save join command to file
   ansible.builtin.copy:
@@ -82,9 +111,11 @@
     owner: "{{ ansible_user }}"
     group: "{{ ansible_user }}"
     mode: '0700'
+  when: admin_conf_stat.stat.exists or not ansible_check_mode
 
 - name: Fetch join command to local control machine
   ansible.builtin.fetch:
     src: "/home/{{ ansible_user }}/k8s-join-command.sh"
     dest: ./k8s-join-command.sh
     flat: true
+  when: admin_conf_stat.stat.exists or not ansible_check_mode
