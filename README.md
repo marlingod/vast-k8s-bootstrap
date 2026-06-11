@@ -241,11 +241,22 @@ Decision tree for `source`:
 storage:
   provisioner: byo            # byo | vast-csi | local-path | none
   class_name:  ca-sc2         # which StorageClass to mark default (byo / local-path)
+
+# Which StorageClass `zarf init` will pass via --storage-class to its
+# seed-registry PVC. Default: storage.class_name above. Override to any
+# key from storage_classes: (the VAST CSI classes you defined in B2) or
+# any other class that exists in the cluster. Empty = let zarf pick the
+# cluster default.
+zarf_init_storage_class: "{{ storage.class_name }}"
 ```
 
 If you ran `make csi` first, use `provisioner: byo` and set `class_name`
 to whichever class you want to be cluster default. For non-VAST quick
 tests, `local-path` installs Rancher's local-path-provisioner.
+
+To pin the seed registry to a specific VAST CSI class regardless of what
+the cluster default is, set `zarf_init_storage_class: "ca-sc1"` (or
+whichever key from `storage_classes:`).
 
 ### C. `inventory/group_vars/all/vault.yml` — secrets
 

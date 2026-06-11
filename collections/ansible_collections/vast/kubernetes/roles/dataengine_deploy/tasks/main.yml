@@ -41,21 +41,11 @@
     - zarf_ns.resources | length == 0
     - not init_pkg_stat.stat.exists
 
-- name: Detect existing default StorageClass
-  kubernetes.core.k8s_info:
-    kind: StorageClass
-  register: all_sc
-  when: zarf_ns.resources | length == 0
-
-- name: Set _has_default_sc
-  ansible.builtin.set_fact:
-    _has_default_sc: >-
-      {{ (all_sc.resources | community.general.json_query(_default_sc_query) | length) > 0 }}
-  vars:
-    _default_sc_query: >-
-      [?metadata.annotations."storageclass.kubernetes.io/is-default-class"=='true'].metadata.name
-  when: zarf_ns.resources | length == 0
-
+# `zarf init` is told which StorageClass to use for the seed-registry PVC
+# via `--storage-class <name>`. The class name comes from
+# zarf_init_storage_class in vars.yml (defaults to storage.class_name, but
+# can be overridden to pin to any class in `storage_classes:`). Empty
+# string means "let zarf pick the cluster default".
 - name: Run zarf init
   ansible.builtin.command: >-
     zarf init
@@ -64,7 +54,7 @@
     --confirm
     --log-level {{ zarf_log_level }}
     {{ '--set REGISTRY_HPA_AUTO_SIZE=true' if (zarf_registry_hpa_auto_size | bool) else '' }}
-    {{ ('--storage-class ' + storage.class_name) if (not _has_default_sc) else '' }}
+    {{ ('--storage-class ' + zarf_init_storage_class) if (zarf_init_storage_class | length > 0) else '' }}
   args:
     chdir: "{{ zarf_init_package_path | dirname }}"
   environment:

@@ -117,6 +117,17 @@ zarf_packages:
 zarf_init_package_path: "{{ zarf_packages.dir }}/zarf-init-amd64-v0.60.0.tar.zst"
 zarf_dataengine_package_path: "{{ zarf_packages.dir }}/zarf-package-dataengine-amd64-1.0.0.tar.zst"
 
+# ─── StorageClass for the `zarf init` seed-registry PVC ────────────────
+# Always passed to zarf init as `--storage-class <value>`. Override the
+# auto-discovery / cluster-default behavior with one of:
+#   - any key from `storage_classes:` above (e.g. "ca-sc1" / "ca-sc2") to
+#     pin the seed-registry PVC to a specific VAST CSI StorageClass.
+#   - any other StorageClass name that exists in the cluster.
+#   - "" (empty) to let zarf init use whatever the cluster default is.
+# Defaults to storage.class_name so a fresh install keeps working without
+# any extra editing.
+zarf_init_storage_class: "{{ storage.class_name }}"
+
 inotify_max_user_instances: 8192
 inotify_max_user_watches: 524288
 
