@@ -61,9 +61,18 @@
     KUBECONFIG: "{{ de_kubeconfig }}"
   when: zarf_ns.resources | length == 0
   register: zarf_init_out
-  async: 900
+  # zarf init does a lot: pulls in-cluster registry image, creates seed
+  # PVC, deploys agent + injector. On VAST CSI / cold cluster this can
+  # easily exceed 15 min while PVC provisioning warms up. 30-min ceiling.
+  async: 1800
   poll: 15
-  changed_when: zarf_init_out.rc == 0
+  # Use default(1) so if the task TIMES OUT (zarf_init_out becomes the
+  # async-job-status dict instead of the command result), rc is treated as
+  # non-zero (= not changed) instead of crashing on missing attribute.
+  changed_when: (zarf_init_out.rc | default(1)) == 0
+  failed_when:
+    - zarf_init_out.finished | default(false)            # async did finish
+    - (zarf_init_out.rc | default(1)) != 0               # …but rc is non-zero
 
 # ── 2. namespaces + labels + secret sync ─────────────────────────────────
 
@@ -113,6 +122,11 @@
   environment:
     KUBECONFIG: "{{ de_kubeconfig }}"
   register: zarf_deploy_out
-  async: 900
+  # DataEngine package pulls many images + waits for knative / KEDA pods.
+  # 30-min ceiling like zarf init.
+  async: 1800
   poll: 15
   changed_when: "'succeeded' in (zarf_deploy_out.stdout | default(''))"
+  failed_when:
+    - zarf_deploy_out.finished | default(false)
+    - (zarf_deploy_out.rc | default(1)) != 0
