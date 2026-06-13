@@ -65,26 +65,45 @@
   no_log: true
 
 # ── cert branch ─────────────────────────────────────────────────────────
+# Generate the keypair on the CONTROLLER (this Mac) — the private key must
+# never leave the laptop that will end up using the kubeconfig. The CSR
+# (which contains only the public half) is what gets sent to the cluster.
+
+- name: "Ensure local cert workdir exists for {{ user.name }}"
+  ansible.builtin.file:
+    path: "{{ k8s_users_local_workdir }}"
+    state: directory
+    mode: '0700'
+  delegate_to: localhost
+  become: false
+  when: user.auth == 'cert'
 
 - name: "Generate private key (cert) for {{ user.name }}"
   community.crypto.openssl_privatekey:
-    path: "/tmp/{{ user.name }}.key"
+    path: "{{ k8s_users_local_workdir }}/{{ user.name }}.key"
     size: 2048
     mode: '0600'
+  delegate_to: localhost
+  become: false
   when: user.auth == 'cert'
 
 - name: "Build CSR (cert) for {{ user.name }}"
   community.crypto.openssl_csr:
-    path: "/tmp/{{ user.name }}.csr"
-    privatekey_path: "/tmp/{{ user.name }}.key"
+    path: "{{ k8s_users_local_workdir }}/{{ user.name }}.csr"
+    privatekey_path: "{{ k8s_users_local_workdir }}/{{ user.name }}.key"
     common_name: "{{ user.name }}"
     organization_name: "{{ user.group | default(omit) }}"
+    mode: '0600'
+  delegate_to: localhost
+  become: false
   when: user.auth == 'cert'
 
 - name: "Read CSR for K8s submission for {{ user.name }}"
   ansible.builtin.slurp:
-    src: "/tmp/{{ user.name }}.csr"
+    src: "{{ k8s_users_local_workdir }}/{{ user.name }}.csr"
   register: csr_blob
+  delegate_to: localhost
+  become: false
   when: user.auth == 'cert'
 
 - name: "Delete stale K8s CSR for {{ user.name }}"
@@ -171,4 +190,4 @@
     _api_endpoint: "{{ user.api_endpoint | default('https://' + hostvars[inventory_hostname].ansible_host + ':6443') }}"
     _token: "{{ (sa_secret.resources[0].data.token | b64decode) if user.auth == 'token' else '' }}"
     _client_cert: "{{ csr_signed.resources[0].status.certificate if user.auth == 'cert' else '' }}"
-    _client_key: "{{ lookup('file', '/tmp/' + user.name + '.key') | b64encode if user.auth == 'cert' else '' }}"
+    _client_key: "{{ lookup('file', k8s_users_local_workdir + '/' + user.name + '.key') | b64encode if user.auth == 'cert' else '' }}"

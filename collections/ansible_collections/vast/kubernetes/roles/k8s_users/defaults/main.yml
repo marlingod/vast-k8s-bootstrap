@@ -1,6 +1,10 @@
 ---
 k8s_users_kubeconfig: /etc/kubernetes/admin.conf
 k8s_users_output_dir: "{{ playbook_dir }}/../kubeconfigs"
+# Where the private key + CSR are generated on the controller (this Mac).
+# The private key NEVER leaves this directory. Default is alongside the
+# emitted kubeconfigs so everything stays in one place per repo.
+k8s_users_local_workdir: "{{ k8s_users_output_dir }}"
 users: []
 # Schema for each entry of `users:`
 #   - name: alice              # K8s identity / SA name
