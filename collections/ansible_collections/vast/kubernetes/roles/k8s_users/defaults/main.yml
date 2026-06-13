@@ -1,10 +1,20 @@
 ---
 k8s_users_kubeconfig: /etc/kubernetes/admin.conf
-k8s_users_output_dir: "{{ playbook_dir }}/../kubeconfigs"
-# Where the private key + CSR are generated on the controller (this Mac).
-# The private key NEVER leaves this directory. Default is alongside the
-# emitted kubeconfigs so everything stays in one place per repo.
-k8s_users_local_workdir: "{{ k8s_users_output_dir }}"
+
+# Where the per-user kubeconfig + cert artifacts land on the operator's
+# laptop. Defaults to ~/.kube so files drop in next to your normal kube
+# tooling and are picked up by `kubectl --kubeconfig`.
+#
+# Per-user layout (cert auth):
+#   {{ k8s_users_output_dir }}/<name>-certs/client.key   0600  (NEVER leaves this Mac)
+#   {{ k8s_users_output_dir }}/<name>-certs/client.csr   0600
+#   {{ k8s_users_output_dir }}/<name>-certs/client.pem   0644
+#   {{ k8s_users_output_dir }}/<name>-certs/ca.pem       0644
+#   {{ k8s_users_output_dir }}/<name>.yaml               0600  (the kubeconfig)
+#
+# Per-user layout (token auth):
+#   {{ k8s_users_output_dir }}/<name>.yaml               0600  (kubeconfig only)
+k8s_users_output_dir: "{{ lookup('env', 'HOME') }}/.kube"
 users: []
 # Schema for each entry of `users:`
 #   - name: alice              # K8s identity / SA name

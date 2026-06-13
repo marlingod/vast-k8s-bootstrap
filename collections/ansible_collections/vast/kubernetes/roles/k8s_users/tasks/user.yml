@@ -65,32 +65,38 @@
   no_log: true
 
 # ── cert branch ─────────────────────────────────────────────────────────
-# Generate the keypair on the CONTROLLER (this Mac) — the private key must
-# never leave the laptop that will end up using the kubeconfig. The CSR
-# (which contains only the public half) is what gets sent to the cluster.
+# Per-user layout on the controller (this Mac):
+#
+#   {{ k8s_users_output_dir }}/{{ user.name }}-certs/
+#     ├── client.key   0600   private key — never leaves this Mac
+#     ├── client.csr   0600
+#     ├── client.pem   0644   signed cert (decoded from K8s response)
+#     └── ca.pem       0644   cluster CA  (decoded from admin.conf)
+#
+# Followed by {{ k8s_users_output_dir }}/{{ user.name }}.yaml (the kubeconfig).
 
-- name: "Ensure local cert workdir exists for {{ user.name }}"
+- name: "Ensure per-user certs dir exists for {{ user.name }}"
   ansible.builtin.file:
-    path: "{{ k8s_users_local_workdir }}"
+    path: "{{ k8s_users_output_dir }}/{{ user.name }}-certs"
     state: directory
     mode: '0700'
   delegate_to: localhost
   become: false
   when: user.auth == 'cert'
 
-- name: "Generate private key (cert) for {{ user.name }}"
+- name: "Generate private key for {{ user.name }}"
   community.crypto.openssl_privatekey:
-    path: "{{ k8s_users_local_workdir }}/{{ user.name }}.key"
+    path: "{{ k8s_users_output_dir }}/{{ user.name }}-certs/client.key"
     size: 2048
     mode: '0600'
   delegate_to: localhost
   become: false
   when: user.auth == 'cert'
 
-- name: "Build CSR (cert) for {{ user.name }}"
+- name: "Build CSR for {{ user.name }}"
   community.crypto.openssl_csr:
-    path: "{{ k8s_users_local_workdir }}/{{ user.name }}.csr"
-    privatekey_path: "{{ k8s_users_local_workdir }}/{{ user.name }}.key"
+    path: "{{ k8s_users_output_dir }}/{{ user.name }}-certs/client.csr"
+    privatekey_path: "{{ k8s_users_output_dir }}/{{ user.name }}-certs/client.key"
     common_name: "{{ user.name }}"
     organization_name: "{{ user.group | default(omit) }}"
     mode: '0600'
@@ -100,7 +106,7 @@
 
 - name: "Read CSR for K8s submission for {{ user.name }}"
   ansible.builtin.slurp:
-    src: "{{ k8s_users_local_workdir }}/{{ user.name }}.csr"
+    src: "{{ k8s_users_output_dir }}/{{ user.name }}-certs/client.csr"
   register: csr_blob
   delegate_to: localhost
   become: false
@@ -177,10 +183,38 @@
   changed_when: false
   no_log: true
 
+- name: "Write client.pem to certs dir for {{ user.name }}"
+  ansible.builtin.copy:
+    content: "{{ csr_signed.resources[0].status.certificate | b64decode }}"
+    dest: "{{ k8s_users_output_dir }}/{{ user.name }}-certs/client.pem"
+    mode: '0644'
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: user.auth == 'cert'
+
+- name: "Write ca.pem to certs dir for {{ user.name }}"
+  ansible.builtin.copy:
+    content: "{{ cluster_ca_b64.stdout | b64decode }}"
+    dest: "{{ k8s_users_output_dir }}/{{ user.name }}-certs/ca.pem"
+    mode: '0644'
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: user.auth == 'cert'
+
+- name: "Ensure kubeconfig parent dir exists for {{ user.name }}"
+  ansible.builtin.file:
+    path: "{{ k8s_users_output_dir }}"
+    state: directory
+    mode: '0700'
+  delegate_to: localhost
+  become: false
+
 - name: "Write kubeconfig for {{ user.name }}"
   ansible.builtin.template:
     src: kubeconfig.yaml.j2
-    dest: "{{ k8s_users_output_dir }}/{{ user.name }}.kubeconfig"
+    dest: "{{ k8s_users_output_dir }}/{{ user.name }}.yaml"
     mode: '0600'
   delegate_to: localhost
   no_log: true
@@ -190,4 +224,4 @@
     _api_endpoint: "{{ user.api_endpoint | default('https://' + hostvars[inventory_hostname].ansible_host + ':6443') }}"
     _token: "{{ (sa_secret.resources[0].data.token | b64decode) if user.auth == 'token' else '' }}"
     _client_cert: "{{ csr_signed.resources[0].status.certificate if user.auth == 'cert' else '' }}"
-    _client_key: "{{ lookup('file', k8s_users_local_workdir + '/' + user.name + '.key') | b64encode if user.auth == 'cert' else '' }}"
+    _client_key: "{{ lookup('file', k8s_users_output_dir + '/' + user.name + '-certs/client.key') | b64encode if user.auth == 'cert' else '' }}"
