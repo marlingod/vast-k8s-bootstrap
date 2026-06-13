@@ -9,6 +9,12 @@ inventory/group_vars/all/vault.yml
 inventory/group_vars/all/vault.yml.*
 !inventory/group_vars/all/vault.yml.example
 
+# Per-cluster vars are user-edited from vars.yml.example. Untracked so
+# `git pull` never conflicts with local cluster config (IPs, tenant
+# names, storage class lists, etc.).
+inventory/group_vars/all/vars.yml
+!inventory/group_vars/all/vars.yml.example
+
 # Per-host vars that may contain cluster IPs / endpoints
 inventory/host_vars/
 

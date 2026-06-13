@@ -1,7 +1,8 @@
 # Entry points for the vast.kubernetes Ansible collection.
 #
 # Usage:
-#   make install       # create .venv + install ansible/galaxy/pip deps (isolated)
+#   make install       # create .venv + bootstrap vars.yml/vault.yml + install deps
+#   make bootstrap     # only create vars.yml/vault.yml from *.example templates
 #   make k8s           # bootstrap kubeadm cluster
 #   make csi           # install VAST CSI driver
 #   make zarf          # deploy VAST DataEngine
@@ -40,11 +41,39 @@ ANSIBLE := $(ANSIBLE_PLAYBOOK) -i $(INV)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install venv k8s csi zarf user site check lint test ping \
+.PHONY: help bootstrap install venv k8s csi zarf user site check lint test ping \
         vault-edit vault-rekey clean distclean
 
 help:
 	@awk '/^# / && NR<=20 {print substr($$0, 3)}' $(MAKEFILE_LIST)
+
+# First-run: copy the *.example templates into the live files that
+# Ansible reads. Safe to re-run — won't overwrite existing files.
+# `git pull` never touches vars.yml / vault.yml (both gitignored), so
+# your cluster config + secrets persist across pulls.
+bootstrap:
+	@if [ ! -f inventory/group_vars/all/vars.yml ]; then \
+		cp inventory/group_vars/all/vars.yml.example inventory/group_vars/all/vars.yml; \
+		chmod 600 inventory/group_vars/all/vars.yml; \
+		echo "created  inventory/group_vars/all/vars.yml   (edit this for your cluster)"; \
+	else \
+		echo "exists   inventory/group_vars/all/vars.yml   (kept as-is)"; \
+	fi
+	@if [ ! -f inventory/group_vars/all/vault.yml ]; then \
+		cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml; \
+		chmod 600 inventory/group_vars/all/vault.yml; \
+		echo "created  inventory/group_vars/all/vault.yml  (edit this and ansible-vault encrypt)"; \
+	else \
+		echo "exists   inventory/group_vars/all/vault.yml  (kept as-is)"; \
+	fi
+	@echo
+	@echo "Next:"
+	@echo "  1. \$$EDITOR inventory/group_vars/all/vars.yml          # cluster config"
+	@echo "  2. \$$EDITOR inventory/group_vars/all/vault.yml         # secrets"
+	@echo "  3. ansible-vault encrypt inventory/group_vars/all/vault.yml"
+	@echo "  4. \$$EDITOR inventory/hosts.ini                        # node IPs"
+	@echo "  5. make check                                          # dry-run"
+	@echo "  6. make site                                           # real run"
 
 # Create an isolated virtualenv and install Ansible + ansible-lint + the
 # kubernetes Python lib into it. NOTHING goes to system Python.
@@ -54,7 +83,7 @@ $(VENV)/bin/activate:
 
 venv: $(VENV)/bin/activate
 
-install: venv
+install: venv bootstrap
 	$(PIP) install -r requirements.txt
 	$(ANSIBLE_GALAXY) collection install -r requirements.yml -p ./collections
 	@echo

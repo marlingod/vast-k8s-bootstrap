@@ -113,14 +113,22 @@ kubernetes/
 ## Quick start
 
 ```bash
-# 1. Install everything into a project-local virtualenv (.venv/).
+# 1. Install everything into a project-local virtualenv (.venv/) AND
+#    bootstrap your local vars.yml + vault.yml from the *.example templates.
 #    NEVER touches your system Python. Other Python projects on the same
 #    machine keep their pinned versions of pyyaml, aiohttp, fastapi, etc.
 make install
-#   creates  .venv/                              # Python virtualenv
-#   pip-installs  requirements.txt               # ansible, ansible-lint, kubernetes, ...
-#   galaxy-installs  requirements.yml            # kubernetes.core, community.general, ...
-#   into  collections/ansible_collections/       # local to this repo
+#   creates  .venv/                                          # Python virtualenv
+#   creates  inventory/group_vars/all/vars.yml               # ← your cluster config (gitignored)
+#   creates  inventory/group_vars/all/vault.yml              # ← your secrets (gitignored)
+#   pip-installs  requirements.txt                           # ansible, ansible-lint, kubernetes, ...
+#   galaxy-installs  requirements.yml                        # kubernetes.core, community.general, ...
+#   into  collections/ansible_collections/                   # local to this repo
+
+# Both vars.yml and vault.yml are gitignored — `git pull` will NEVER touch
+# them. Schema updates to the upstream template land in vars.yml.example /
+# vault.yml.example; you `diff` against your live files and merge what you
+# want.
 
 # (Optional) activate the venv so `ansible`, `ansible-playbook`, `ansible-lint`
 # resolve from .venv/bin/ in your shell. Not required if you only use `make ...`
@@ -133,8 +141,7 @@ chmod 700 ~/.config/vast-kubernetes
 echo '<your-real-password>' > ~/.config/vast-kubernetes/vault_pass
 chmod 600 ~/.config/vast-kubernetes/vault_pass
 
-# 3. Copy the example vault file and encrypt it
-cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
+# 3. Fill in your secrets and encrypt
 $EDITOR inventory/group_vars/all/vault.yml             # fill in real secrets
 make vault-edit                                        # one-shot encrypt+edit
 # or directly: .venv/bin/ansible-vault encrypt inventory/group_vars/all/vault.yml
