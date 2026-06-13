@@ -217,6 +217,7 @@
     dest: "{{ k8s_users_output_dir }}/{{ user.name }}.yaml"
     mode: '0600'
   delegate_to: localhost
+  become: false                  # don't sudo on the Mac (play-level become: true would)
   no_log: true
   vars:
     _cluster_name: "{{ user.cluster_name | default('vastde-cluster') }}"
