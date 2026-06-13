@@ -151,3 +151,29 @@ vast_namespaces:
   - vast-dataengine
   - knative-eventing
   - knative-serving
+
+# =========================================================================
+# users (provisioned by `make user`, role: k8s_users)
+# =========================================================================
+# Each entry → one K8s identity + one ~/.kube/<name>.yaml kubeconfig on
+# this Mac. The cert auth flow also creates ~/.kube/<name>-certs/ with
+# client.key (0600, NEVER leaves this Mac) + client.csr + client.pem + ca.pem.
+#
+# auth: cert  → X.509 client cert via K8s CSR signer  (recommended)
+# auth: token → ServiceAccount + bearer token         (longer-lived, less secure)
+#
+# Add more users by appending to the list. Override any field per-entry.
+users:
+  - name: k8s-admin                # change to your preferred identity
+    auth: cert
+    role: cluster-admin            # any cluster role that exists
+    cert_days: 365                 # cert validity in days
+    cluster_name: vast-k8s         # appears in kubeconfig's clusters[].name
+    # group: "system:masters"      # optional cert O= field
+    # api_endpoint: https://10.143.2.138:6443  # optional override (default = master inventory IP)
+
+  # Example second user — uncomment to enable
+  # - name: bob
+  #   auth: token
+  #   role: cluster-admin
+  #   namespace: kube-system
