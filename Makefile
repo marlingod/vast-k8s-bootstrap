@@ -11,6 +11,7 @@
 #   make check         # ansible-playbook --check --diff (dry-run)
 #   make lint          # ansible-lint + yamllint + shellcheck
 #   make test          # offline test battery (CI safe)
+#   make vault-encrypt # one-time: encrypt vault.yml on first run (after bootstrap)
 #   make vault-edit    # ansible-vault edit inventory/group_vars/all/vault.yml
 #   make vault-rekey   # rotate vault password
 #   make clean         # remove .retry, .cache, /tmp artifacts (keeps .venv)
@@ -42,7 +43,7 @@ ANSIBLE := $(ANSIBLE_PLAYBOOK) -i $(INV)
 .DEFAULT_GOAL := help
 
 .PHONY: help bootstrap install venv k8s csi zarf user site check lint test ping \
-        vault-edit vault-rekey clean distclean
+        vault-encrypt vault-edit vault-rekey clean distclean
 
 help:
 	@awk '/^# / && NR<=20 {print substr($$0, 3)}' $(MAKEFILE_LIST)
@@ -140,8 +141,23 @@ test:
 	@echo "==> bash -n"
 	@bash -n user-setup/*.sh && echo "    bash -n: OK"
 
+vault-encrypt:
+	@if head -1 $(VAULT) 2>/dev/null | grep -q '^\$$ANSIBLE_VAULT'; then \
+		echo "$(VAULT) is already encrypted — nothing to do."; \
+		echo "Use 'make vault-edit' to edit it, or 'make vault-rekey' to rotate the password."; \
+	else \
+		$(ANSIBLE_VAULT) encrypt $(VAULT) && \
+		echo "Encrypted $(VAULT). Use 'make vault-edit' to edit."; \
+	fi
+
 vault-edit:
-	$(ANSIBLE_VAULT) edit $(VAULT)
+	@if head -1 $(VAULT) 2>/dev/null | grep -q '^\$$ANSIBLE_VAULT'; then \
+		$(ANSIBLE_VAULT) edit $(VAULT); \
+	else \
+		echo "ERROR: $(VAULT) is not yet ansible-vault encrypted."; \
+		echo "       Run 'make vault-encrypt' first (one-time)."; \
+		exit 1; \
+	fi
 
 vault-rekey:
 	$(ANSIBLE_VAULT) rekey $(VAULT)
