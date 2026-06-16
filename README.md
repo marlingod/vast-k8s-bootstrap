@@ -86,11 +86,13 @@ kubernetes/
 ├── Makefile                                # entry points: make k8s|csi|zarf|user|site|test|lint|check
 ├── ansible.cfg                             # collections_path, vault_password_file, fact cache
 ├── inventory/
-│   ├── hosts.ini                           # ONE inventory for everything
+│   ├── hosts.ini                           # ONE inventory for everything (tracked, you edit)
 │   ├── localhost.ini                       # offline test stub (used by `make test`)
 │   └── group_vars/all/
-│       ├── vars.yml                        # non-secret defaults + vault_* indirection
-│       └── vault.yml                       # ansible-vault encrypted secrets
+│       ├── vars.yml.example                # tracked — schema source of truth
+│       ├── vars.yml                        # GITIGNORED — your cluster config (made by `make bootstrap`)
+│       ├── vault.yml.example               # tracked — vault template with placeholders
+│       └── vault.yml                       # GITIGNORED — ansible-vault encrypted secrets
 ├── requirements.yml                        # kubernetes.core, community.general, community.crypto, ansible.posix
 ├── requirements.txt                        # ansible, ansible-lint, kubernetes, ...
 ├── .ansible-lint .yamllint .pre-commit-config.yaml
@@ -101,6 +103,10 @@ kubernetes/
 ├── user-setup/                             # bash flow for environments without Ansible
 └── docs/{k8s-setup,csi,zarf,user-setup}.md
 ```
+
+`vars.yml` and `vault.yml` are **gitignored** — `git pull` never touches
+them. Schema updates from upstream appear in `*.example`; you `diff` and
+merge what you want on your own schedule.
 
 ## Requirements
 
@@ -124,11 +130,11 @@ make install
 #   pip-installs  requirements.txt                           # ansible, ansible-lint, kubernetes, ...
 #   galaxy-installs  requirements.yml                        # kubernetes.core, community.general, ...
 #   into  collections/ansible_collections/                   # local to this repo
-
-# Both vars.yml and vault.yml are gitignored — `git pull` will NEVER touch
-# them. Schema updates to the upstream template land in vars.yml.example /
-# vault.yml.example; you `diff` against your live files and merge what you
-# want.
+#
+# Note: `make install` is a combination of `make bootstrap` (the file
+# scaffolding) + `make venv` + dep install. To redo just the bootstrap
+# step (safely re-running if the live files don't exist yet), use
+# `make bootstrap` on its own.
 
 # (Optional) activate the venv so `ansible`, `ansible-playbook`, `ansible-lint`
 # resolve from .venv/bin/ in your shell. Not required if you only use `make ...`
@@ -141,10 +147,12 @@ chmod 700 ~/.config/vast-kubernetes
 echo '<your-real-password>' > ~/.config/vast-kubernetes/vault_pass
 chmod 600 ~/.config/vast-kubernetes/vault_pass
 
-# 3. Fill in your secrets and encrypt
+# 3. Fill in your secrets and encrypt (one-time per repo)
 $EDITOR inventory/group_vars/all/vault.yml             # fill in real secrets
-make vault-edit                                        # one-shot encrypt+edit
-# or directly: .venv/bin/ansible-vault encrypt inventory/group_vars/all/vault.yml
+make vault-encrypt                                     # ONE-TIME first encryption
+# From now on:
+#   make vault-edit                                    # opens decrypted in $EDITOR, re-encrypts on save
+#   make vault-rekey                                   # rotates the vault password
 
 # 4. Edit hosts + cluster-specific config (see "Configure for your cluster" below)
 $EDITOR inventory/hosts.ini
@@ -158,7 +166,7 @@ make check                               # full dry-run with diffs, no mutations
 make k8s                                 # bootstrap kubeadm cluster
 make csi                                 # install VAST CSI driver
 make zarf                                # deploy VAST DataEngine
-make user                                # provision K8s users
+make user                                # provision K8s users → ~/.kube/<name>.yaml
 
 # or all of them in order:
 make site
@@ -166,6 +174,33 @@ make site
 # 7. Idempotency check
 make site                                # second run should report changed=0
 ```
+
+### What `make user` produces
+
+For every entry in the `users:` list in `vars.yml`, `make user` lands files
+on **your Mac** (never on the cluster nodes — the private key never leaves
+this laptop):
+
+```
+~/.kube/
+├── <name>-certs/                        # only created for auth: cert
+│   ├── client.key      0600             # ← private key, NEVER leaves this Mac
+│   ├── client.csr      0600
+│   ├── client.pem      0644             # signed client cert
+│   └── ca.pem          0644             # cluster CA
+└── <name>.yaml         0600             # the kubeconfig (self-contained, base64-embedded)
+```
+
+Use it:
+
+```bash
+KUBECONFIG=~/.kube/<name>.yaml kubectl auth whoami        # → User: <name>
+KUBECONFIG=~/.kube/<name>.yaml kubectl get nodes
+```
+
+The default `users:` entry in `vars.yml` provisions one cluster-admin user
+named `k8s-admin` with X.509 cert auth (365-day expiry). Edit the list to
+rename, change role, add more entries.
 
 ## Configure for your cluster
 
@@ -187,7 +222,7 @@ references those host aliases — you usually don't touch it.
 
 ### B. `inventory/group_vars/all/vars.yml` — non-secret config
 
-The file is divided into four sections. Edit only what applies to your install.
+The file is divided into five sections. Edit only what applies to your install.
 
 #### B1. K8s cluster (skip if you already have a healthy cluster)
 
@@ -265,9 +300,33 @@ To pin the seed registry to a specific VAST CSI class regardless of what
 the cluster default is, set `zarf_init_storage_class: "ca-sc1"` (or
 whichever key from `storage_classes:`).
 
+#### B5. Users — K8s identities + kubeconfigs
+
+```yaml
+users:
+  - name: k8s-admin                # K8s user identity (default; rename if you want)
+    auth: cert                     # cert | token
+    role: cluster-admin            # any ClusterRole that exists
+    cert_days: 365                 # cert validity (cert auth only)
+    cluster_name: vast-k8s         # appears in kubeconfig's clusters[].name
+    # group: "system:masters"      # optional cert O= field
+    # api_endpoint: https://<master>:6443    # optional override; default = master inventory IP
+
+  # Example second user, token auth — uncomment to enable
+  # - name: bob
+  #   auth: token
+  #   role: cluster-admin
+  #   namespace: kube-system
+```
+
+Append entries for additional users. `make user` then produces one
+`~/.kube/<name>.yaml` per entry (plus a `~/.kube/<name>-certs/` dir for
+cert auth — see *What `make user` produces* above).
+
 ### C. `inventory/group_vars/all/vault.yml` — secrets
 
-After `cp vault.yml.example vault.yml`, fill in:
+`make install` (or `make bootstrap`) already copied
+`vault.yml.example` → `vault.yml` for you. Edit:
 
 ```yaml
 vault_ansible_password:        "<sudo password on your nodes>"
@@ -277,7 +336,14 @@ vault_vms_username:            "ca-tenant-admin"     # …user+pass
 vault_vms_password:            "<VMS password>"
 ```
 
-Then `ansible-vault encrypt inventory/group_vars/all/vault.yml`.
+Then encrypt once:
+
+```bash
+make vault-encrypt        # one-time first encryption
+# From now on:
+make vault-edit           # opens decrypted in $EDITOR, re-encrypts on save
+make vault-rekey          # rotate vault password
+```
 
 ## Role catalog (19 roles)
 
@@ -322,8 +388,10 @@ ansible-playbook ... --tags k8s_master    # only the kubeadm init step
 - **Indirection:** roles never reference `vault_*` directly; `vars.yml`
   maps `vault_ansible_password` → `ansible_password`, etc.
 - **Logging:** every task that consumes a secret carries `no_log: true`.
-- **Vault round-trip:** `make vault-edit` and `make vault-rekey` are the
-  ergonomic wrappers around `ansible-vault edit` / `rekey`.
+- **Vault lifecycle:**
+  - `make vault-encrypt` — one-time first encryption (after `make bootstrap` lays down the plaintext template).
+  - `make vault-edit` — opens decrypted in `$EDITOR`, re-encrypts on save. Fails clearly if not yet encrypted.
+  - `make vault-rekey` — rotate the vault password.
 
 ## Verification
 
