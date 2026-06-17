@@ -448,3 +448,4 @@ Override to `""` and use a virtualenv if you prefer strict isolation.
 - `docs/csi.md` — VAST CSI driver internals (Helm, snapshot CRDs, VMS auth)
 - `docs/zarf.md` — DataEngine / Zarf pipeline (the 6-role chain)
 - `docs/user-setup.md` — bash flow for K8s users (no-Ansible fallback)
+- `docs/vast-kb-gaps.md` — every workaround in this codebase mapped to a gap in the official VAST KB (CSI install, DataEngine prereqs, undocumented order-of-ops, --check mode pitfalls, tooling gotchas)
