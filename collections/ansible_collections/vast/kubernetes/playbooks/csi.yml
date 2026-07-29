@@ -41,6 +41,37 @@
       when:
         - ansible_check_mode | bool
         - not _csi_kubeconfig_stat.stat.exists
+    # Real runs fail fast with an actionable message. Without this, helm
+    # gets KUBECONFIG=<missing file>, silently treats it as empty config,
+    # and dies with the cryptic "localhost:8080: connection refused".
+    - name: Fail fast — no kubeconfig on this host
+      ansible.builtin.fail:
+        msg: >-
+          No kubeconfig at
+          {{ csi_kubeconfig | default('/etc/kubernetes/admin.conf') }} on
+          {{ inventory_hostname }}. On non-kubeadm clusters set
+          csi_kubeconfig in inventory/group_vars/all/vars.yml
+          (RKE2: /etc/rancher/rke2/rke2.yaml, K3s:
+          /etc/rancher/k3s/k3s.yaml), and make sure [csi_controller]
+          points at a host that has it.
+      when:
+        - not ansible_check_mode
+        - not _csi_kubeconfig_stat.stat.exists
+    - name: Ensure /root/.kube exists
+      ansible.builtin.file:
+        path: /root/.kube
+        state: directory
+        mode: '0700'
+      when: _csi_kubeconfig_stat.stat.exists
+    # Covers `make csi` standalone (without `make k8s` first): root gets a
+    # working kubeconfig for interactive kubectl/helm debugging too.
+    - name: Ensure root has a kubeconfig
+      ansible.builtin.copy:
+        src: "{{ csi_kubeconfig | default('/etc/kubernetes/admin.conf') }}"
+        dest: /root/.kube/config
+        remote_src: true
+        mode: '0600'
+      when: _csi_kubeconfig_stat.stat.exists
   roles:
     - vast.kubernetes.python_k8s_client
     - vast.kubernetes.helm_install

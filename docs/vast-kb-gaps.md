@@ -77,6 +77,24 @@ Read this alongside the official VAST documentation:
 
 ---
 
+## 1.7 A kubeconfig must exist on the `[csi_controller]` host — non-kubeadm clusters need `csi_kubeconfig`
+
+| | |
+|--|--|
+| **Gap** | `make csi` on an already-built cluster assumes `/etc/kubernetes/admin.conf` (kubeadm convention). On RKE2/K3s/managed clusters that file doesn't exist; helm receives `KUBECONFIG=<missing file>`, silently treats it as empty config, and falls back to its ancient `localhost:8080` default. |
+| **KB position** | Not addressed — the CSI KB assumes a working `kubectl`/`helm` context. |
+| **Workaround** | `playbooks/csi.yml` pre_tasks fail fast with an actionable message when the kubeconfig is missing, and copy it to `/root/.kube/config` when present (covers `make csi` standalone). `csi_kubeconfig` in `vars.yml` overrides the path (RKE2: `/etc/rancher/rke2/rke2.yaml`, K3s: `/etc/rancher/k3s/k3s.yaml`). |
+| **Symptom if removed** | `Error: Kubernetes cluster unreachable: Get "http://localhost:8080/version": dial tcp 127.0.0.1:8080: connect: connection refused` on the first helm task. |
+
+## 1.8 `rpc.statd` must be running for NFSv3 PVC mounts
+
+| | |
+|--|--|
+| **Gap** | The VAST CSI mounts with `vers=3`, and NFSv3 file locking needs `rpc.statd` on the client. `mount.nfs` auto-starts statd only when `rpcbind` is running; on hosts with rpcbind disabled the mount fails outright. |
+| **KB position** | Not addressed — the KB stops at "install the NFS client package". |
+| **Workaround** | `roles/nfs_client/` now enables+starts `rpcbind` and starts `rpc-statd` (a static unit — start-only) on every mount target. |
+| **Symptom if removed** | `MountVolume.SetUp failed ... mount.nfs: rpc.statd is not running but is required for remote locking. Either use '-o nolock' to keep locks local, or start statd.` |
+
 # 2. DataEngine / Zarf gaps
 
 ## 2.1 inotify kernel limits must be raised before pods schedule
@@ -170,6 +188,15 @@ Read this alongside the official VAST documentation:
 | **Symptom if removed** | At 15 min in, the old code crashed with `'object of type dict has no attribute rc'` — confusing template error masking the actual timeout. |
 
 ---
+
+## 2.11 Redeploying DataEngine 1.0.0 over an older package hits Helm ownership conflicts
+
+| | |
+|--|--|
+| **Gap** | Between package versions, cluster-scoped knative resources (operator ClusterRoles/Bindings, `operator-webhook`, `-aggregated`/`-stable` variants) moved from the `vast-knative` chart into `vast-knative-operator`. Helm's ownership check refuses to let the new release adopt resources annotated with the old release name, and cluster-scoped resources survive namespace deletion — so a fresh-looking cluster still fails. |
+| **KB position** | Not addressed — the DataEngine KB covers clean installs only. |
+| **Workaround** | Two options. **Surgical:** for each resource the error names, `kubectl annotate <res> meta.helm.sh/release-name=vast-knative-operator meta.helm.sh/release-namespace=vast-dataengine --overwrite` + `kubectl label <res> app.kubernetes.io/managed-by=Helm --overwrite`, re-run, repeat (many resources moved — expect several rounds). **Clean (recommended on test clusters):** `helm -n vast-dataengine uninstall vast-knative`, delete any orphans still annotated with the old release name, then re-run `make zarf` — the package reinstalls both charts. Zarf resumes idempotently either way. |
+| **Symptom if removed** | `zarf package deploy` fails with `ClusterRole "..." in namespace "" exists and cannot be imported into the current release: invalid ownership metadata; annotation validation error: key "meta.helm.sh/release-name" must equal "vast-knative-operator": current value is "vast-knative"` (3 retry attempts, then `release: not found`). |
 
 # 3. K8s cluster prerequisites the DE docs assume but don't require
 

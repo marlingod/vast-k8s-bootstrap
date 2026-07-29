@@ -22,3 +22,20 @@
   register: mount_nfs_check
   changed_when: false
   failed_when: mount_nfs_check.rc != 0
+
+# NFSv3 mounts (the VAST CSI default: vers=3) do file locking via the NLM
+# side-band protocol, which needs rpc.statd on the client. mount.nfs
+# auto-starts statd only when rpcbind is up — with rpcbind disabled the
+# mount fails with "rpc.statd is not running but is required".
+- name: Ensure rpcbind is enabled and running (required by statd)
+  ansible.builtin.service:
+    name: rpcbind
+    state: started
+    enabled: true
+
+# rpc-statd is a static unit on most distros (can't be "enabled") — start
+# it explicitly; it stays up and mount.nfs finds it registered.
+- name: Ensure rpc.statd is running (NFSv3 remote locking)
+  ansible.builtin.service:
+    name: rpc-statd
+    state: started

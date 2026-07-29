@@ -76,8 +76,13 @@ The `k8s_cluster.yml` playbook assumes vanilla VMs (Debian/Ubuntu/RHEL) with:
 
 If you already have a healthy cluster (the common case at VAST customer
 sites), skip `make k8s` entirely — `make csi` and `make zarf` will run
-against whatever cluster `inventory/group_vars/all/vault.yml`'s kubeconfig
-on the master points at.
+against whatever cluster the kubeconfig on the `[csi_controller]` host
+points at (`/etc/kubernetes/admin.conf` by default). If your cluster was
+not built by kubeadm, set `csi_kubeconfig` in
+`inventory/group_vars/all/vars.yml` to its admin kubeconfig
+(RKE2: `/etc/rancher/rke2/rke2.yaml`, K3s: `/etc/rancher/k3s/k3s.yaml`) —
+otherwise helm fails with a misleading
+`localhost:8080: connection refused`.
 
 ## Layout
 
