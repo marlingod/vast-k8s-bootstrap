@@ -139,6 +139,29 @@ In proxy mode Zarf replaces the `127.0.0.1` hostPort with a **`socat` proxy Daem
    (Some Zarf versions gate this behind `--features=registry-proxy=true`. IPv6-only clusters
    flip to host network automatically.)
 
+### Beyond init — the package itself must be OpenShift-compatible (field notes)
+
+Fixing the registry path is **necessary but not sufficient**. Field experience
+(Rob, OpenShift bring-up):
+
+- **Zarf does not work seamlessly with OpenShift out of the box.** The Zarf
+  *package* must be authored in an OpenShift-compatible way: OpenShift's
+  policy engine (SCC admission) and RBAC model reject workloads that assume
+  vanilla-Kubernetes defaults — containers that run as root or a fixed UID,
+  added capabilities, `hostPath`/`hostNetwork` without an SCC binding. Such a
+  package deploys past `zarf init` fine and then its pods are refused or
+  crash-loop under the `restricted` SCC. Audit the package's charts against
+  OpenShift's restricted SCC before shipping it to an OpenShift customer.
+- **Workaround that avoided the built-in registry entirely: ZOT.**
+  [ZOT](https://zotregistry.dev) (open-source OCI registry) was stood up as
+  the registry for the OpenShift environment instead of Zarf's built-in
+  `zarf-docker-registry`. `zarf init` supports an **external registry**
+  (`--registry-url` + push/pull credentials), which skips the whole
+  injector / seed / `127.0.0.1` NodePort machinery — the OVN hostPort
+  problem never arises. ZOT itself runs fine under OpenShift's restricted
+  policies, making it a cleaner fit than proxy mode when you're allowed to
+  run one extra service.
+
 ### Before re-running
 - **Confirm OVN:** `oc get network.operator cluster -o jsonpath='{.spec.defaultNetwork.type}'`
   → expect `OVNKubernetes`.
@@ -160,4 +183,5 @@ In proxy mode Zarf replaces the `127.0.0.1` hostPort with a **`socat` proxy Daem
 - [Zarf issue #4585 — Document registry proxy mode](https://github.com/zarf-dev/zarf/issues/4585)
 - [Zarf issue #2146 — Improve security of zarf registry NodePort](https://github.com/zarf-dev/zarf/issues/2146)
 - [Collibra CPSH — Zarf install on OpenShift (proxy mode + prereqs)](https://productresources.collibra.com/docs/release-notes/Content/Installation/CPSH/ta_cpsh-zarf-extend-cap.htm)
+- [ZOT — OCI-native container registry](https://zotregistry.dev)
 - [OpenShift OVN-Kubernetes network plugin](https://docs.redhat.com/en/documentation/openshift_container_platform/4.16/html/networking/ovn-kubernetes-network-plugin)
