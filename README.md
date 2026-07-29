@@ -25,7 +25,12 @@ In particular, on the VAST cluster you need:
   view policies, snapshots, and quotas. The token (or username + password)
   is what you put under `vault_vms_token` / `vault_vms_username` /
   `vault_vms_password` in `inventory/group_vars/all/vault.yml`.
-- A **VIP pool** (or VIP pool FQDN) for NFS mounts.
+- A **VIP pool** (or VIP pool FQDN) for NFS mounts. If you use
+  `vipPoolFQDN`, the pool's DNS zone must be **delegated** so the name —
+  and *any* prefix of it, when `vipPoolFQDNRandomPrefix` is on — resolves
+  from every K8s node. Verify from a worker before deploying:
+  `getent hosts <vip-fqdn>` and `ping <one-vip-ip>` (the VIPs must also be
+  reachable on the nodes' data network / VLAN, not just resolvable).
 - A **view policy** and storage path the CSI driver can provision under.
 - The endpoint hostname/IP of the VMS — goes in `vms_endpoint` in
   `inventory/group_vars/all/vars.yml`.
@@ -106,7 +111,7 @@ kubernetes/
 │   ├── playbooks/{site,k8s_cluster,csi,zarf,users}.yml   # thin orchestrators
 │   └── roles/                              # 19 reusable roles (see Role catalog)
 ├── user-setup/                             # bash flow for environments without Ansible
-└── docs/{k8s-setup,csi,zarf,user-setup}.md
+└── docs/{k8s-setup,csi,zarf,user-setup,vast-kb-gaps}.md
 ```
 
 `vars.yml` and `vault.yml` are **gitignored** — `git pull` never touches
@@ -361,7 +366,7 @@ make vault-rekey          # rotate vault password
 | `kubeadm_master` | `kubeadm init`, install Flannel CNI, generate join token | k8s |
 | `kubeadm_worker` | `kubeadm join` | k8s |
 | `firewall_k8s` | open K8s ports on firewalld / ufw | k8s |
-| `nfs_client` | install `nfs-common` / `nfs-utils` | k8s, csi |
+| `nfs_client` | install `nfs-common` / `nfs-utils`; enable `rpcbind` + `rpc.statd` (NFSv3 locking) | k8s, csi |
 | `python_k8s_client` | pip-install `kubernetes` lib (required by every `kubernetes.core` task) | k8s, csi, zarf, users |
 | `helm_install` | install Helm 3 binary | csi |
 | `snapshot_crds` | apply external-snapshotter CRDs | csi |
@@ -446,6 +451,20 @@ python_k8s_client_pip_extra_args: "--break-system-packages --ignore-installed py
 ```
 
 Override to `""` and use a virtualenv if you prefer strict isolation.
+
+## Troubleshooting — symptom quick index
+
+Full catalog with causes and fixes: [`docs/vast-kb-gaps.md`](docs/vast-kb-gaps.md).
+The ones testers hit most:
+
+| Symptom | Cause → fix |
+| --- | --- |
+| `helm: Kubernetes cluster unreachable ... localhost:8080` | No kubeconfig at the expected path on `[csi_controller]` — set `csi_kubeconfig` in `vars.yml` (gap 1.7) |
+| `mount.nfs: rpc.statd is not running but is required` | `rpcbind`/statd not running on the node — rerun `make csi` (nfs_client now fixes it) or `systemctl enable --now rpcbind` (gap 1.8) |
+| PVC mount: `Failed to resolve server <vip-fqdn>` | VIP-pool DNS zone not delegated — see the CSI prerequisites above |
+| PVC mount hangs, then `Volume ... is locked` | VIPs resolve but don't answer (wrong VLAN / pool inactive) — `ping` a VIP from a worker; fix pool network in VMS |
+| `zarf package deploy`: `... exists and cannot be imported into the current release` | Leftovers from an older DataEngine package — uninstall the old release or re-annotate (gap 2.11) |
+| Pods `ImagePullBackOff` on `127.0.0.1:31999/...` for non-Zarf images | Zarf's webhook rewrote the image — label the namespace `zarf.dev/agent=ignore` (gap 2.7) |
 
 ## See also
 
