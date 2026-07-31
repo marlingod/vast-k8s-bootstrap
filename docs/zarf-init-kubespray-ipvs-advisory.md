@@ -70,6 +70,22 @@ kubectl -n kube-system get cm kube-proxy -o yaml | grep -w mode
 
 ## Resolution
 
+> **Validation status.** What has been verified in the lab is the root cause
+> and the mechanism of the fix: switching kube-proxy to iptables mode on the
+> affected cluster, after which `zarf init` completed successfully (see
+> Appendix for the exact procedure used). The specific procedures below have
+> **not** been exercised end-to-end by VAST and are provided as the standard
+> paths to that same end state — validate in a non-production environment
+> first:
+>
+> - **Option A:** mechanism verified (iptables mode fixes the failure); the
+>   Kubespray re-run procedure itself was not exercised.
+> - **Option B:** not tested in this environment. The external-registry
+>   approach has been used successfully by VAST field engineering on a
+>   different platform (OpenShift); its applicability here is by design of
+>   `zarf init --registry-url`, not by test.
+> - **Option C:** not tested; flag availability varies by Zarf version.
+
 ### Option A (recommended) — deploy kube-proxy in iptables mode
 
 In the Kubespray inventory, set:
