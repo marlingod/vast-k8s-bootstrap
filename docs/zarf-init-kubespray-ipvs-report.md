@@ -119,3 +119,18 @@ kubectl -n kube-system get cm kube-proxy -o yaml | grep -w mode   # want: iptabl
 - `docs/vast-kb-gaps.md` — catalog of gaps between the field and the VAST KB.
 - [Zarf issue #2146 — registry NodePort security/behavior](https://github.com/zarf-dev/zarf/issues/2146)
 - [Kubespray kube-proxy configuration](https://github.com/kubernetes-sigs/kubespray)
+
+---
+
+## Addendum (2026-07-31) — resolution options validated end-to-end
+
+Both advisory options were subsequently tested on the same Kubespray cluster:
+
+| Test | Procedure | Result |
+|---|---|---|
+| A (existing cluster, `cluster.yml` re-run) | set `kube_proxy_mode: iptables` in inventory, re-run `cluster.yml` on the live IPVS cluster | ❌ **No-op**: playbook completed 0-failed but the cluster stayed in IPVS mode — the kube-proxy ConfigMap is only generated at cluster creation. Advisory rewritten: existing clusters must use the in-place switch. |
+| A (fresh deploy) | `reset.yml` + `cluster.yml` with the var set | ✅ Cluster came up `mode: iptables`; default `zarf init` succeeded (registry Running). Note: `kube-ipvs0` survived even reset — inert, manual delete advised. |
+| B (external registry under IPVS) | cluster reverted to IPVS in place; ZOT v2.1.18 as a host systemd service on the master; containerd `certs.d` hosts.toml on all nodes (Kubespray ships `config_path` enabled — no restart needed); `zarf init --registry-url … --plain-http` | ✅ Init succeeded with kube-proxy in IPVS; agent pods pull from the external registry; no in-cluster zarf registry. **Gotcha found:** ZOT rejects Zarf's Docker-format manifests with HTTP 415 unless `http.compat: ["docker2s2"]` is set. |
+
+Advisory (`zarf-init-kubespray-ipvs-advisory.md`) updated to carry only these
+measured claims; Option C (registry proxy mode) remains labeled untested.

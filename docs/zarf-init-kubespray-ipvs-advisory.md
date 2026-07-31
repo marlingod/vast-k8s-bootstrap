@@ -7,8 +7,10 @@ installation via Zarf.
 **Impact:** Blocks DataEngine installation at the first step — the Zarf
 in-cluster registry bootstrap (`zarf init`) cannot complete. No workloads are
 affected; the failure occurs before any DataEngine component is deployed.
-**Validation:** Root cause and resolution verified on a Kubespray-deployed
-test cluster (Calico CNI, Zarf v0.60.0), 2026-07-31.
+**Validation:** Root cause and **both resolution options below were verified
+end-to-end** on a Kubespray-deployed test cluster (Kubespray-current /
+Kubernetes v1.36, Calico VXLAN, Zarf v0.60.0), 2026-07-31. Each option's
+section states exactly what was tested.
 
 ---
 
@@ -21,9 +23,14 @@ kube-proxy runs in **IPVS mode — Kubespray's default —** do not support
 localhost NodePort access, so the bootstrap fails with a registry image pull
 error. The cluster itself is healthy; only this access pattern is missing.
 
-**Resolution:** run kube-proxy in **iptables** mode (a one-line Kubespray
-setting), **or** point Zarf at an external registry, which avoids the
-mechanism entirely. Both options are detailed below.
+**Resolution:** run kube-proxy in **iptables** mode (Option A), **or** point
+Zarf at an external registry (Option B), which avoids the mechanism entirely.
+
+> ⚠️ **Important caveat found in testing:** on an **existing** cluster,
+> changing `kube_proxy_mode` in the Kubespray inventory and re-running
+> `cluster.yml` **does not apply the change** — the playbook completes
+> successfully but kube-proxy stays in IPVS mode. See Option A for the
+> procedures that actually work.
 
 ## Symptom
 
@@ -70,79 +77,122 @@ kubectl -n kube-system get cm kube-proxy -o yaml | grep -w mode
 
 ## Resolution
 
-> **Validation status.** What has been verified in the lab is the root cause
-> and the mechanism of the fix: switching kube-proxy to iptables mode on the
-> affected cluster, after which `zarf init` completed successfully (see
-> Appendix for the exact procedure used). The specific procedures below have
-> **not** been exercised end-to-end by VAST and are provided as the standard
-> paths to that same end state — validate in a non-production environment
-> first:
->
-> - **Option A:** mechanism verified (iptables mode fixes the failure); the
->   Kubespray re-run procedure itself was not exercised.
-> - **Option B:** not tested in this environment. The external-registry
->   approach has been used successfully by VAST field engineering on a
->   different platform (OpenShift); its applicability here is by design of
->   `zarf init --registry-url`, not by test.
-> - **Option C:** not tested; flag availability varies by Zarf version.
+### Option A — kube-proxy in iptables mode
 
-### Option A (recommended) — deploy kube-proxy in iptables mode
+*Consideration:* IPVS is sometimes chosen deliberately for very large Service
+counts. At typical DataEngine cluster sizes, iptables mode has no practical
+drawback.
 
-In the Kubespray inventory, set:
+#### A1 — New / redeployable clusters ✅ *(verified end-to-end)*
+
+Set the mode in the Kubespray inventory **before deploying**:
 
 ```yaml
 # group_vars/k8s_cluster/k8s-cluster.yml
 kube_proxy_mode: iptables
 ```
 
-- For a new cluster: deploy normally; no further action.
-- For an existing cluster: re-run the Kubespray cluster playbook, then clear
-  IPVS remnants on every node so they do not shadow the new rules:
+Deploy normally, then run `zarf init`.
+**Tested result:** a fresh Kubespray deployment with this setting came up in
+iptables mode and a default `zarf init` completed successfully — registry
+`Running`, no manual steps.
 
-  ```bash
-  sudo ipvsadm --clear && sudo ip link del kube-ipvs0
-  ```
+#### A2 — Existing clusters that cannot be redeployed ✅ *(verified end-to-end)*
 
-Then run `zarf init` (or re-run the DataEngine installation) normally.
+**Do not rely on a `cluster.yml` re-run** — in testing, re-running the
+playbook with `kube_proxy_mode: iptables` set completed without errors and
+changed nothing: the cluster remained in IPVS mode (the kube-proxy ConfigMap
+is only generated at cluster-creation time). Instead, switch in place:
 
-*Consideration:* IPVS is sometimes chosen deliberately for very large Service
-counts. At typical DataEngine cluster sizes, iptables mode has no practical
-drawback.
+```bash
+# 1. Flip the mode in the kube-proxy ConfigMap
+kubectl -n kube-system get cm kube-proxy -o yaml \
+  | sed 's/mode: ipvs/mode: iptables/' | kubectl apply -f -
 
-### Option B — external registry (no cluster changes)
+# 2. Restart kube-proxy so it picks the mode up
+kubectl -n kube-system rollout restart ds kube-proxy
 
-If the cluster configuration cannot be changed, `zarf init` can use an
-existing registry instead of bootstrapping its own:
+# 3. On EVERY node, clear IPVS remnants (they otherwise shadow the new rules)
+sudo ipvsadm --clear && sudo ip link del kube-ipvs0
+```
+
+**Also set `kube_proxy_mode: iptables` in the Kubespray inventory** so the
+recorded configuration matches reality and future cluster operations do not
+reintroduce IPVS.
+**Tested result:** after this switch, `zarf init` completed successfully on
+the same cluster that previously failed.
+*(Note: the inert `kube-ipvs0` device can survive even a full
+`reset.yml`/redeploy cycle; deleting it as in step 3 is harmless.)*
+
+### Option B — external registry, no cluster changes ✅ *(verified end-to-end under IPVS)*
+
+If the cluster configuration cannot be changed at all, `zarf init` can use an
+existing registry instead of bootstrapping its own. This bypasses the
+localhost NodePort mechanism entirely — **verified working with kube-proxy
+still in IPVS mode**, using [ZOT](https://zotregistry.dev) running as a plain
+host service outside the cluster:
 
 ```bash
 zarf init --registry-url <registry-host>:<port> \
-          --registry-push-username <user> \
-          --registry-push-password <password> \
-          -a amd64
+          --registry-push-username <user> --registry-push-password <password> \
+          --registry-pull-username <user> --registry-pull-password <password> \
+          --plain-http -a amd64 --confirm
 ```
 
-Any OCI-compliant registry reachable from all nodes works (for example
-[ZOT](https://zotregistry.dev), Harbor, or an existing corporate registry).
-This bypasses the localhost NodePort mechanism entirely, so the kube-proxy
-mode becomes irrelevant. The registry must remain available for the life of
-the cluster (workload images are pulled from it on every pod start).
+Three prerequisites found in testing — all required:
 
-### Option C — Zarf registry proxy mode (newer Zarf versions)
+1. **containerd must trust the registry** on every node. For a plain-HTTP
+   registry, create on each node:
+   ```
+   # /etc/containerd/certs.d/<registry-host>:<port>/hosts.toml
+   server = "http://<registry-host>:<port>"
+   [host."http://<registry-host>:<port>"]
+     capabilities = ["pull", "resolve"]
+     skip_verify = true
+   ```
+   Kubespray's containerd config already enables
+   `config_path = /etc/containerd/certs.d`, so the file takes effect without
+   restarting containerd. (An HTTPS registry with a trusted certificate needs
+   none of this and no `--plain-http`.)
+2. **ZOT specifically: enable Docker-manifest compatibility.** ZOT is strict
+   OCI by default and rejects Zarf's Docker-format image manifests with
+   `HTTP 415 manifest invalid`. In the ZOT config:
+   ```json
+   "http": { "address": "0.0.0.0", "port": "5000", "compat": ["docker2s2"] }
+   ```
+   (Verified on ZOT v2.1.18. Docker-tolerant registries — Harbor, Docker
+   `registry` — should not need an equivalent, though this was not tested.)
+3. **The registry must remain available for the life of the cluster** —
+   workload images are pulled from it on every pod start.
+
+**Tested result:** with the above in place, `zarf init --registry-url`
+completed on the IPVS-mode cluster; the Zarf agent pods came up pulling
+images directly from the external registry, and no in-cluster
+`zarf-docker-registry` is deployed in this mode.
+
+### Option C — Zarf registry proxy mode ⚠️ *(not tested)*
 
 Recent Zarf releases offer `--registry-mode=proxy` with a host-network proxy,
 which also avoids localhost NodePorts. Check `zarf init --help` in your Zarf
-version for flag availability before planning around this option.
+version for flag availability before planning around this option. This path
+was **not** exercised in our validation.
 
 ## Verification
 
 Pre-flight (before any DataEngine install on a new cluster):
 
 ```bash
-kubectl -n kube-system get cm kube-proxy -o yaml | grep -w mode   # expect: iptables
+kubectl -n kube-system get cm kube-proxy -o yaml | grep -w mode   # want: iptables (for Option A)
 ```
 
-Post-fix: `zarf init` completes; `kubectl get pods -n zarf` shows the
-`zarf-docker-registry` pod `Running`.
+Post-fix:
+
+- Option A: `zarf init` completes; `kubectl get pods -n zarf` shows
+  `zarf-docker-registry` `Running`.
+- Option B: `zarf init` completes; `kubectl get pods -n zarf` shows the
+  agent pods `Running` with images referencing your external registry
+  (`kubectl get pods -n zarf -o jsonpath='{.items[*].spec.containers[*].image}'`),
+  and **no** `zarf-docker-registry` pod (expected in external mode).
 
 ## Support boundary
 
@@ -153,24 +203,6 @@ Post-fix: `zarf init` completes; `kubectl get pods -n zarf` shows the
 - If the symptom persists with `mode: iptables` confirmed, engage VAST
   support with the output of `kubectl get pods -n zarf -o wide` and
   `kubectl describe pod` for the failing registry pod.
-
----
-
-## Appendix — in-place mode switch (diagnostic use only)
-
-The following switches kube-proxy to iptables **without** re-running
-Kubespray. It was used to validate the root cause in a lab and is suitable
-for test clusters. **Do not use as the permanent fix on production** — the
-change is reverted by the next Kubespray run, leaving the cluster in a state
-that disagrees with its inventory.
-
-```bash
-kubectl -n kube-system get cm kube-proxy -o yaml \
-  | sed 's/mode: ipvs/mode: iptables/' | kubectl apply -f -
-kubectl -n kube-system rollout restart ds kube-proxy
-# then on EVERY node:
-sudo ipvsadm --clear && sudo ip link del kube-ipvs0
-```
 
 ## References
 
