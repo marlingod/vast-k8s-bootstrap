@@ -100,4 +100,4 @@
     name: kubelet
     enabled: true
     state: started
-  when: kubelet_bin.stat.exists or not ansible_check_mode
+  when: kubelet_bin.stat.exists | default(false) or not ansible_check_mode
