@@ -48,22 +48,45 @@ Before running `make zarf`, complete the VAST-side prep documented in:
 This is mandatory — the playbook does **not** provision the VAST tenant,
 S3 view policy, NATS access, or Kafka brokers on the VAST side. You will:
 
-- **Obtain the two `.tar.zst` Zarf packages from your VAST SE.** They are
-  not in any public release feed:
-  - `zarf-init-amd64-v<VERSION>.tar.zst`
-  - `zarf-package-dataengine-amd64-<VERSION>.tar.zst`
-- **Drop them in a local directory on this machine** (the operator's Mac
-  or Linux box, not the K8s master). Default expected paths are in
-  `inventory/group_vars/all/vars.yml` under `zarf_packages.operator_*_path`:
+- **Obtain the Zarf packages from your VAST SE.** They are not in any
+  public release feed. Two forms exist:
+  - the two individual `.tar.zst` files —
+    `zarf-init-amd64-v<VERSION>.tar.zst` and
+    `zarf-package-dataengine-amd64-<VERSION>.tar.zst`, or
+  - a single **offline bundle** `.tar.gz` (contains both, plus extras) via a
+    time-limited presigned download URL.
+- **Package filenames derive from version vars — set them in one place.**
+  `zarf_init_package_path` / `zarf_dataengine_package_path` are templated
+  from `zarf_version`, `zarf_arch`, and `zarf_dataengine_version`, so a
+  version bump is a one-line change, not a filename edit:
+  ```yaml
+  zarf_version: "v0.60.0"          # zarf tool + init package version
+  zarf_arch: "amd64"
+  zarf_dataengine_version: "1.0.0" # DataEngine package version (independent)
+  ```
+  > ⚠️ Keep these paths **literal** — do **not** use `*` wildcards. The
+  > verify step uses `ansible.builtin.stat` (and `unarchive`'s `creates:`),
+  > neither of which expands globs, so a wildcard path silently fails.
+- **Pick a `source` mode** in `inventory/group_vars/all/vars.yml`:
   ```yaml
   zarf_packages:
-    source: upload                              # operator → master scp
-    dir: "/home/{{ ansible_user }}/vast-zarf-packages"
-    operator_init_path: /Users/<you>/Documents/vast/dataengine/packages/zarf-init-amd64-v0.60.0.tar.zst
-    operator_dataengine_path: /Users/<you>/Documents/vast/dataengine/packages/zarf-package-dataengine-amd64-1.0.0.tar.zst
+    dir: "/home/{{ ansible_user }}/vast-zarf-packages"   # on-master cache
+
+    # source: upload  → operator scp's the two .tar.zst (or an outer .tar.gz) to master
+    source: upload
+    operator_init_path: /Users/<you>/Documents/vast/dataengine/packages/zarf-init-{{ zarf_arch }}-{{ zarf_version }}.tar.zst
+    operator_dataengine_path: /Users/<you>/Documents/vast/dataengine/packages/zarf-package-dataengine-{{ zarf_arch }}-{{ zarf_dataengine_version }}.tar.zst
+
+    # source: operator_download  → this Mac fetches bundle_url, scp's + extracts on master
+    # source: download           → the master fetches bundle_url directly
+    # bundle_url: "https://…/dataengine_offline-<N>.vast.tar.gz?…&Expires=…"
   ```
-  The `zarf_packages` role scp's them to `zarf_packages.dir` on the master
-  before `zarf init` / `zarf package deploy` consume them.
+  The `zarf_packages` role stages the packages under `zarf_packages.dir` on
+  the master before `zarf init` / `zarf package deploy` consume them.
+  > 💡 Presigned `bundle_url`s **expire** (S3 returns `403 Request has
+  > expired`). Once you have the bundle locally, switch to `source: upload`
+  > (or `local` if already staged on the master) to avoid re-downloading and
+  > chasing a fresh signed URL each run.
 - **Set up the prerequisite external services** described in the KB doc
   (tenant, S3 access, NATS, network policies, etc.) so the DataEngine
   workloads have somewhere to land.
