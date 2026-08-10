@@ -85,6 +85,7 @@ snapshot_crds_version: v7.0.1
 zarf_detect_existing: true
 zarf_version: "v0.60.0"
 zarf_arch: "amd64"
+zarf_dataengine_version: "1.0.0"       # DataEngine package version (independent of zarf_version)
 zarf_install_dir: /usr/local/bin
 zarf_log_level: debug
 zarf_registry_hpa_auto_size: true
@@ -117,11 +118,13 @@ zarf_packages:
   #     operator_dataengine_path BOTH set  → scp the two .tar.zst as-is (no extract)
   # If both (a) and (b) are set, (b) wins.
   operator_bundle_path: ""
-  operator_init_path: /Users/yemalin.godonou/Documents/vast/dataengine/packages/zarf-init-amd64-v0.60.0.tar.zst
-  operator_dataengine_path: /Users/yemalin.godonou/Documents/vast/dataengine/packages/zarf-package-dataengine-amd64-1.0.0.tar.zst
+  operator_init_path: "/Users/yemalin.godonou/Documents/vast/dataengine/packages/zarf-init-{{ zarf_arch }}-{{ zarf_version }}.tar.zst"
+  operator_dataengine_path: "/Users/yemalin.godonou/Documents/vast/dataengine/packages/zarf-package-dataengine-{{ zarf_arch }}-{{ zarf_dataengine_version }}.tar.zst"
 
-zarf_init_package_path: "{{ zarf_packages.dir }}/zarf-init-amd64-v0.60.0.tar.zst"
-zarf_dataengine_package_path: "{{ zarf_packages.dir }}/zarf-package-dataengine-amd64-1.0.0.tar.zst"
+# Filenames derive from the version/arch vars above — bump zarf_version /
+# zarf_dataengine_version / zarf_arch in one place, not in these strings.
+zarf_init_package_path: "{{ zarf_packages.dir }}/zarf-init-{{ zarf_arch }}-{{ zarf_version }}.tar.zst"
+zarf_dataengine_package_path: "{{ zarf_packages.dir }}/zarf-package-dataengine-{{ zarf_arch }}-{{ zarf_dataengine_version }}.tar.zst"
 
 # ─── StorageClass for the `zarf init` seed-registry PVC ────────────────
 # Always passed to zarf init as `--storage-class <value>`. Override the
