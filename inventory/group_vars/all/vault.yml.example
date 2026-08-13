@@ -11,9 +11,16 @@
 #
 # vault.yml itself is gitignored — never commit decrypted secrets.
 
-# --- SSH / sudo on every host ---
-vault_ansible_password: "CHANGE_ME"
-vault_ansible_become_password: "CHANGE_ME"
+# --- SSH / sudo on every host (all OPTIONAL) ---
+# Uncomment ONLY what your access model needs. A commented (undefined) key
+# makes its connection var in vars.yml omit itself — so key-auth + NOPASSWD
+# sudo needs NOTHING here. Never set these to "" (empty string != undefined).
+#   • Key-based login, passwordless sudo → leave BOTH commented.
+#   • Password login                     → set vault_ansible_password (needs sshpass).
+#   • Sudo requires a password           → set vault_ansible_become_password.
+# vault_ansible_user: "vastdata"                # only if the login user differs
+# vault_ansible_password: "CHANGE_ME"           # SSH password login
+# vault_ansible_become_password: "CHANGE_ME"    # sudo password
 
 # --- VAST VMS auth for the CSI driver ---
 # Credentials only. The tenant NAME (vms_tenant), VMS endpoint, VIP pool,

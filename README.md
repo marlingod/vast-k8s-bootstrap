@@ -95,8 +95,15 @@ S3 view policy, NATS access, or Kafka brokers on the VAST side. You will:
 
 The `k8s_cluster.yml` playbook assumes vanilla VMs (Debian/Ubuntu/RHEL) with:
 
-- SSH reachable from this machine (Ansible control node).
-- A sudo-capable user (default `vastdata`) on every node.
+- SSH reachable from this machine (Ansible control node). **Login is
+  configurable** in `vars.yml` and works with any combo (nothing to edit in
+  playbooks): SSH **key** (`ssh_private_key_file`, the default/recommended
+  path), **password** (`vault_ansible_password` — needs `sshpass` on the
+  controller), or your existing ssh-agent/`~/.ssh` setup if you set neither.
+- A sudo-capable user (default `vastdata`) on every node. **Sudo** is also
+  configurable: passwordless (NOPASSWD → leave `vault_ansible_become_password`
+  unset), password (`vault_ansible_become_password`), or `ansible_become: false`
+  if you log in as root. See the SSH/sudo block in `vars.yml.example`.
 - Outbound HTTPS to `pkgs.k8s.io`, `download.docker.com`, GitHub releases
   for Flannel and external-snapshotter CRDs (unless you run air-gapped, in
   which case mirror those or use the `local` source mode where supported).
@@ -362,8 +369,11 @@ cert auth — see *What `make user` produces* above).
 `vault.yml.example` → `vault.yml` for you. Edit:
 
 ```yaml
-vault_ansible_password:        "<sudo password on your nodes>"
-vault_ansible_become_password: "<same as above; can differ if your sudo prompts>"
+# SSH / sudo — all OPTIONAL; uncomment only what your access model needs.
+# Key-based login + passwordless sudo needs NOTHING here (leave commented).
+# vault_ansible_password:        "<SSH login password>"   # needs sshpass
+# vault_ansible_become_password: "<sudo password>"        # skip for NOPASSWD sudo
+
 vault_vms_token:               ""                    # preferred; OR…
 vault_vms_username:            "ca-tenant-admin"     # …user+pass
 vault_vms_password:            "<VMS password>"

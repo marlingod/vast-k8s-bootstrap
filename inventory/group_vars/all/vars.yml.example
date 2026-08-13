@@ -4,10 +4,36 @@
 #
 # Edit this file freely. Do NOT put secrets here — encrypt them in vault.yml.
 
-# --- SSH / sudo identity (passwords come from vault.yml) ---
-ansible_user: vastdata
-ansible_password: "{{ vault_ansible_password }}"
-ansible_become_password: "{{ vault_ansible_become_password }}"
+# --- SSH / sudo identity — two INDEPENDENT layers: login, then sudo ------
+# Each optional var uses `default(omit)`: if its source is UNDEFINED, the
+# option is dropped entirely and Ansible's default applies. This one file
+# covers every combination — set only what you use.
+#
+#   ⚠️  To DISABLE an option, leave its source UNDEFINED (comment it out in
+#       vault.yml). An empty string ("") is NOT the same as omit and WILL
+#       break auth. Never set these to "".
+#
+# Defaults below (nothing set) → Ansible uses your normal SSH setup
+# (ssh-agent / ~/.ssh keys / ~/.ssh/config) and passwordless sudo.
+
+ansible_user: "{{ vault_ansible_user | default('vastdata') }}"
+
+# (1) LOGIN — choose ONE (or neither → uses ssh-agent / default keys / --ask-pass):
+#   • Key auth (recommended): uncomment ssh_private_key_file, point at the key
+#     path ON THIS CONTROLLER (the key file stays in ~/.ssh, not in the repo).
+#   • Password auth: set vault_ansible_password via `make vault-edit`
+#     (requires `sshpass` installed on the controller).
+# ssh_private_key_file: "~/.ssh/id_ed25519"
+ansible_ssh_private_key_file: "{{ ssh_private_key_file | default(omit) }}"
+ansible_password: "{{ vault_ansible_password | default(omit) }}"
+
+# (2) BECOME (sudo — needed for package installs, service starts, etc.):
+#   • Passwordless sudo (NOPASSWD): leave vault_ansible_become_password unset.
+#   • Sudo needs a password: set vault_ansible_become_password via vault-edit.
+#   • Login is already root / no escalation needed: set ansible_become: false.
+ansible_become: true
+ansible_become_method: sudo
+ansible_become_password: "{{ vault_ansible_become_password | default(omit) }}"
 
 # =========================================================================
 # k8s_cluster (k8s-setup playbook)
