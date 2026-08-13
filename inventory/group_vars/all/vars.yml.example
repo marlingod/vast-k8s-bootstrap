@@ -28,10 +28,13 @@ ansible_ssh_private_key_file: "{{ ssh_private_key_file | default(omit) }}"
 ansible_password: "{{ vault_ansible_password | default(omit) }}"
 
 # (2) BECOME (sudo — needed for package installs, service starts, etc.):
+# become is turned ON by the playbooks (become: true at play level); the vars
+# below only tune it. Do NOT set `ansible_become: true` here — as a variable
+# it OVERRIDES the roles' task-level `become: false` on localhost-delegated
+# tasks, making them try to sudo on the control machine (your Mac).
 #   • Passwordless sudo (NOPASSWD): leave vault_ansible_become_password unset.
 #   • Sudo needs a password: set vault_ansible_become_password via vault-edit.
 #   • Login is already root / no escalation needed: set ansible_become: false.
-ansible_become: true
 ansible_become_method: sudo
 ansible_become_password: "{{ vault_ansible_become_password | default(omit) }}"
 
